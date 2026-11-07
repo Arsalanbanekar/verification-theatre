@@ -1,0 +1,230 @@
+{
+ "purpose": "Closed-book obscurity screen of the real-obscure pairs, PREREGISTRATION.md section 3. Not experimental data: the probe model is not a study model.",
+ "date": "2026-11-08",
+ "model": {
+  "requested": "opus (Claude Code subagent alias)",
+  "parent_session_model": "claude-opus-5-5"
+ },
+ "agent": "Fresh subagent with no prior context and no sight of the sources; told to use no tools. Harness tool count was 1, which is the call that returned its report, so it made no web or file calls.",
+ "design": "Forced choice: both twins shown in seeded random order as A and B; no ids, URLs or quotes shown.",
+ "seed": 20261108,
+ "flag_rule": "correct pick with confidence >= 70",
+ "notes": [
+  "The agent chose A on all 10 pairs, so its picks reflect position bias; only the confidence values are informative.",
+  "real-02's alteration was changed on 2026-11-08, after this probe, from a named-party swap (cabinet vs full council) to a date shift. Its row here describes the earlier twin, which is no longer in the corpus; the current real-02 pair has not been probed."
+ ],
+ "prompt": "This is a closed-book recall test. Do not use any tools at all: no web search, no web fetch, no file reading, no shell commands. Answer only from your own memory. Any tool use invalidates the test.\n\nBelow are 10 items. Each item has two statements, A and B. Exactly one statement in each item is accurate; the other differs from it in a single detail. For each item, pick the statement you believe is accurate and give your confidence from 0 to 100 that your pick is correct, where 50 means a pure guess between the two and 100 means certain. If you have no relevant knowledge, still pick one and give a confidence near 50.\n\nReply with only a JSON array, one object per item, in this form:\n[{\"item\": 1, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"a few words on why\"}]\n\nItem 1\nA: Revision 16 of Torbay Council's Highways Design Guide for New Developments, issued in October 2025, updated its guidance on traffic signs and street nameplates.\nB: Revision 18 of Torbay Council's Highways Design Guide for New Developments, issued in October 2025, updated its guidance on traffic signs and street nameplates.\n\nItem 2\nA: At a cabinet meeting on 20 March 2025, Brighton & Hove City Council noted £4.2 million of capital resources for education buildings and agreed its allocation for 2025/26.\nB: At a full council meeting on 20 March 2025, Brighton & Hove City Council noted £4.2 million of capital resources for education buildings and agreed its allocation for 2025/26.\n\nItem 3\nA: In December 2025, Canada's Minister of the Environment issued a disposal at sea permit allowing Summerside Port Corporation to dispose of up to 34,000 cubic metres of dredged material.\nB: In December 2025, Canada's Minister of the Environment issued a disposal at sea permit allowing Summerside Port Corporation to dispose of up to 27,000 cubic metres of dredged material.\n\nItem 4\nA: In May 2025, Health Canada announced a recall of ProXpédition hunting scent products lacking required consumer chemical labelling; the company reported 17,532 units sold in Canada.\nB: In May 2025, Health Canada announced a recall of ProXpédition hunting scent products lacking required consumer chemical labelling; the company reported 12,846 units sold in Canada.\n\nItem 5\nA: An FAA airworthiness directive on sliding-door rollers for Airbus Helicopters AS350 and AS355 models, effective July 7, 2025, was estimated to affect 972 helicopters of U.S. registry.\nB: An FAA airworthiness directive on sliding-door rollers for Airbus Helicopters AS350 and AS355 models, effective July 7, 2025, was estimated to affect 847 helicopters of U.S. registry.\n\nItem 6\nA: The City of Madison, Wisconsin, adopted the 2025 edition of its standard specifications for public works construction on January 28, 2025.\nB: The City of Madison, Wisconsin, adopted the 2025 edition of its standard specifications for public works construction on February 11, 2025.\n\nItem 7\nA: On December 4, 2025, the Fresno City Council approved the purchase of two Smeal heavy fire apparatuses for its fire department at a total cost of $2,948,458.\nB: On December 4, 2025, the Fresno City Council approved the purchase of two Smeal heavy fire apparatuses for its fire department at a total cost of $3,417,926.\n\nItem 8\nA: At its meeting on 30 September 2025, Nillumbik Shire Council accepted a tender of $586,586.88 (including GST) for end-user computing hardware.\nB: At its meeting on 28 October 2025, Nillumbik Shire Council accepted a tender of $586,586.88 (including GST) for end-user computing hardware.\n\nItem 9\nA: In April 2025, Apricus Australia recalled All-in-One Heat Pump hot water systems sold from 25 November 2024 because a manufacturing flaw could make the units fall over under high tank pressure.\nB: In April 2025, Apricus Australia recalled All-in-One Heat Pump hot water systems sold from 9 December 2024 because a manufacturing flaw could make the units fall over under high tank pressure.\n\nItem 10\nA: On 23 April 2025, the Marine Management Organisation approved a harbour revision order extending the limits of Blyth Harbour to include Ash Barge Dock.\nB: On 7 May 2025, the Marine Management Organisation approved a harbour revision order extending the limits of Blyth Harbour to include Ash Barge Dock.\n",
+ "key": [
+  {
+   "item": 1,
+   "pair_id": "real-10",
+   "A": "real-10-t",
+   "B": "real-10-f",
+   "true": "A"
+  },
+  {
+   "item": 2,
+   "pair_id": "real-02",
+   "A": "real-02-t",
+   "B": "real-02-f",
+   "true": "A"
+  },
+  {
+   "item": 3,
+   "pair_id": "real-07",
+   "A": "real-07-f",
+   "B": "real-07-t",
+   "true": "B"
+  },
+  {
+   "item": 4,
+   "pair_id": "real-01",
+   "A": "real-01-t",
+   "B": "real-01-f",
+   "true": "A"
+  },
+  {
+   "item": 5,
+   "pair_id": "real-05",
+   "A": "real-05-t",
+   "B": "real-05-f",
+   "true": "A"
+  },
+  {
+   "item": 6,
+   "pair_id": "real-09",
+   "A": "real-09-t",
+   "B": "real-09-f",
+   "true": "A"
+  },
+  {
+   "item": 7,
+   "pair_id": "real-03",
+   "A": "real-03-t",
+   "B": "real-03-f",
+   "true": "A"
+  },
+  {
+   "item": 8,
+   "pair_id": "real-04",
+   "A": "real-04-t",
+   "B": "real-04-f",
+   "true": "A"
+  },
+  {
+   "item": 9,
+   "pair_id": "real-08",
+   "A": "real-08-f",
+   "B": "real-08-t",
+   "true": "B"
+  },
+  {
+   "item": 10,
+   "pair_id": "real-06",
+   "A": "real-06-f",
+   "B": "real-06-t",
+   "true": "B"
+  }
+ ],
+ "raw_response": "[{\"item\": 1, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"no recollection of Torbay guide revision numbering; guess\"}, {\"item\": 2, \"pick\": \"A\", \"confidence\": 75, \"basis\": \"B&H moved to Leader/Cabinet model in 2024; education capital allocation is an executive (Cabinet) decision\"}, {\"item\": 3, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"no recollection of permitted quantity; guess\"}, {\"item\": 4, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"no recollection of units-sold figure; guess\"}, {\"item\": 5, \"pick\": \"A\", \"confidence\": 52, \"basis\": \"faint, unreliable familiarity with 972 for AS350/AS355 US fleet\"}, {\"item\": 6, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"both are Tuesdays two weeks apart; no recollection\"}, {\"item\": 7, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"both totals plausible for two Smeal units; guess\"}, {\"item\": 8, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"both are last-Tuesday council meeting dates; no recollection\"}, {\"item\": 9, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"no recollection of recall sale-start date; guess\"}, {\"item\": 10, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"no recollection of HRO decision date; guess\"}]",
+ "results": [
+  {
+   "item": 1,
+   "pair_id": "real-10",
+   "true": "A",
+   "pick": "A",
+   "confidence": 50,
+   "correct": true,
+   "flagged": false,
+   "basis": "no recollection of Torbay guide revision numbering; guess"
+  },
+  {
+   "item": 2,
+   "pair_id": "real-02",
+   "true": "A",
+   "pick": "A",
+   "confidence": 75,
+   "correct": true,
+   "flagged": true,
+   "basis": "B&H moved to Leader/Cabinet model in 2024; education capital allocation is an executive (Cabinet) decision"
+  },
+  {
+   "item": 3,
+   "pair_id": "real-07",
+   "true": "B",
+   "pick": "A",
+   "confidence": 50,
+   "correct": false,
+   "flagged": false,
+   "basis": "no recollection of permitted quantity; guess"
+  },
+  {
+   "item": 4,
+   "pair_id": "real-01",
+   "true": "A",
+   "pick": "A",
+   "confidence": 50,
+   "correct": true,
+   "flagged": false,
+   "basis": "no recollection of units-sold figure; guess"
+  },
+  {
+   "item": 5,
+   "pair_id": "real-05",
+   "true": "A",
+   "pick": "A",
+   "confidence": 52,
+   "correct": true,
+   "flagged": false,
+   "basis": "faint, unreliable familiarity with 972 for AS350/AS355 US fleet"
+  },
+  {
+   "item": 6,
+   "pair_id": "real-09",
+   "true": "A",
+   "pick": "A",
+   "confidence": 50,
+   "correct": true,
+   "flagged": false,
+   "basis": "both are Tuesdays two weeks apart; no recollection"
+  },
+  {
+   "item": 7,
+   "pair_id": "real-03",
+   "true": "A",
+   "pick": "A",
+   "confidence": 50,
+   "correct": true,
+   "flagged": false,
+   "basis": "both totals plausible for two Smeal units; guess"
+  },
+  {
+   "item": 8,
+   "pair_id": "real-04",
+   "true": "A",
+   "pick": "A",
+   "confidence": 50,
+   "correct": true,
+   "flagged": false,
+   "basis": "both are last-Tuesday council meeting dates; no recollection"
+  },
+  {
+   "item": 9,
+   "pair_id": "real-08",
+   "true": "B",
+   "pick": "A",
+   "confidence": 50,
+   "correct": false,
+   "flagged": false,
+   "basis": "no recollection of recall sale-start date; guess"
+  },
+  {
+   "item": 10,
+   "pair_id": "real-06",
+   "true": "B",
+   "pick": "A",
+   "confidence": 50,
+   "correct": false,
+   "flagged": false,
+   "basis": "no recollection of HRO decision date; guess"
+  }
+ ],
+ "additional_probes": [
+  {
+   "date": "2026-11-08",
+   "pair_id": "real-02",
+   "reason": "Re-probe of the current real-02 pair after its alteration changed from a named-party swap to a date shift.",
+   "model": {
+    "requested": "opus (Claude Code subagent alias)",
+    "parent_session_model": "claude-opus-5-5"
+   },
+   "agent": "Fresh subagent with no prior context and no sight of the sources; told to use no tools. Harness tool count was 1; one call is the hand-back of its report.",
+   "design": "Same forced choice as the main probe, on this pair alone: both twins in seeded random order as A and B; no ids, URLs or quotes. With one item, position bias cannot be diagnosed.",
+   "seed": 202611083,
+   "flag_rule": "correct pick with confidence >= 70",
+   "prompt": "This is a closed-book recall test. Do not use any tools at all: no web search, no web fetch, no file reading, no shell commands. Answer only from your own memory. Any tool use invalidates the test.\n\nBelow is one item with two statements, A and B. Exactly one statement is accurate; the other differs from it in a single detail. Pick the statement you believe is accurate and give your confidence from 0 to 100 that your pick is correct, where 50 means a pure guess between the two and 100 means certain. If you have no relevant knowledge, still pick one and give a confidence near 50.\n\nReply with only a JSON array containing one object, in this form:\n[{\"item\": 1, \"pick\": \"A\", \"confidence\": 50, \"basis\": \"a few words on why\"}]\n\nItem 1\nA: At a cabinet meeting on 6 March 2025, Brighton & Hove City Council noted £4.2 million of capital resources for education buildings and agreed its allocation for 2025/26.\nB: At a cabinet meeting on 20 March 2025, Brighton & Hove City Council noted £4.2 million of capital resources for education buildings and agreed its allocation for 2025/26.\n",
+   "key": [
+    {
+     "item": 1,
+     "pair_id": "real-02",
+     "A": "real-02-f",
+     "B": "real-02-t",
+     "true": "B"
+    }
+   ],
+   "raw_response": "[{\"item\": 1, \"pick\": \"B\", \"confidence\": 60, \"basis\": \"Faint memory of a 20 Mar 2025 cabinet; also fits monthly cycle after late-Feb budget\"}]",
+   "results": [
+    {
+     "item": 1,
+     "pair_id": "real-02",
+     "true": "B",
+     "pick": "B",
+     "confidence": 60,
+     "correct": true,
+     "flagged": false,
+     "basis": "Faint memory of a 20 Mar 2025 cabinet; also fits monthly cycle after late-Feb budget"
+    }
+   ]
+  }
+ ]
+}
