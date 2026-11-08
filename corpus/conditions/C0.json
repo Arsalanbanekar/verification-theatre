@@ -1,0 +1,9 @@
+{
+  "_condition": "C0",
+  "_mark": "None.",
+  "_licenses": "Nothing. Baseline and per-item prior measure.",
+  "_notes": [
+    "No manifest. The prompt holds the document, the question and the output instructions only; the reasons list is the same as in every other condition."
+  ],
+  "manifest": null
+}

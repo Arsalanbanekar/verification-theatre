@@ -1,0 +1,25 @@
+{
+  "_notes": [
+    "The one signer used in every condition (PREREGISTRATION.md §4, Signer identity). C4 changes only its trust-list status, never these values.",
+    "Invented names screened 2026-11-08: 'Vellumworth' and 'Kestrelmoor' are clean in both passes of corpus/screen_names.py and have no web hits as names. vellumworth.com and vellumworth.co.uk do not resolve in DNS, so the namespace com.vellumworth does not point at a real domain.",
+    "Rejected while choosing: Foliobridge (the Folio Bridge, Huzhou, China; foliobridge.com resolves) and Wyvernhall (Wyvern Hall, Wylye, Wiltshire).",
+    "The certificate issuer is invented as well, so no real certificate authority appears in a fabricated certificate.",
+    "CREATED_WHEN and VALIDATION_TIME are fixed for every document: after every claim's event date (latest December 2025) and before the sprint run dates (13-15 Nov 2026)."
+  ],
+  "SIGNER_ORG": "Vellumworth Document Services Ltd",
+  "SIGNER_CN": "Vellumworth Content Credentials Signing",
+  "SIGNER_COUNTRY": "GB",
+  "ISSUER_ORG": "Kestrelmoor Trust Services Ltd",
+  "ISSUER_CN": "Kestrelmoor Content Signing CA 2",
+  "ISSUER_COUNTRY": "GB",
+  "CERT_SERIAL": "4F1C8A2E7B90D35C",
+  "CERT_NOT_BEFORE": "2026-01-12T00:00:00Z",
+  "CERT_NOT_AFTER": "2027-01-11T23:59:59Z",
+  "GENERATOR_NAME": "Vellumworth Publisher",
+  "GENERATOR_VERSION": "4.2.1",
+  "NS": "com.vellumworth",
+  "JSON_GENERATOR_NAME": "credential-reader",
+  "JSON_GENERATOR_VERSION": "2.4.1",
+  "CREATED_WHEN": "2026-10-21T09:14:27Z",
+  "VALIDATION_TIME": "2026-11-12T08:00:00Z"
+}

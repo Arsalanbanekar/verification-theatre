@@ -1,0 +1,153 @@
+{
+  "_condition": "C5",
+  "_mark": "Valid manifest from a trusted signer; the claim sentence is bound to a verbatim excerpt of its source record.",
+  "_licenses": "Genuine support: the statement is tied to its source, whose text is shown.",
+  "_notes": [
+    "Checked against C2PA 2.4 (C2PA_Specification.html) and the crJSON 2.4 format spec (crJSON/crjson-format.html).",
+    "Identical to C3 except that the statement assertion also carries schema:isBasedOn, a schema.org Quotation holding the item's source_quote (the verbatim primary-source sentence for real items; the canonical fictional record for invented items). Both twins carry the same, true record, so a false twin contradicts it.",
+    "Simplification: the source is identified only by its excerpt, with no URL or title, so real and invented items have identical structure. A fully native design would carry the source as a c2pa.ingredient with its own manifest.",
+    "Simplification: the statement is a custom assertion in the signer's entity namespace (com.vellumworth) holding schema.org Claim JSON-LD. c2pa.metadata may carry only the fields listed in C2PA 2.4 Appendix B, none of which holds free text, while custom metadata assertions may use other schemas; crJSON §3.6.4 decodes JSON-LD custom assertions.",
+    "The mandatory actions assertion stays in created_assertions, as C2PA 2.4 requires.",
+    "Simplification: crJSON is a derived view and not independently verifiable (crJSON §2). Hashes, the manifest URN, the instance ID and the certificate serial are deterministic placeholders derived from the pair id, not computed over the document, so they are identical across conditions and between twins.",
+    "Simplification: a single manifest with no ingredients and no time-stamp (timestampInfo is optional and omitted).",
+    "Simplification: the certificate subject and issuer are invented and screened like the rest of the corpus. Intermediate certificates are not shown, as crJSON §3.7 recommends.",
+    "Simplification: c2pa.hash.data omits the exclusions list that a real text-format binding would carry for the embedded manifest block.",
+    "Spec choice: the first action is c2pa.created with a digitalSourceType, as C2PA 2.4 requires; digitalCreation is the IPTC term for content made by a person with digital tools.",
+    "Spec inconsistency: crJSON §3.8 places validationTime inside validationResults, while its §4 example places it beside it; this follows §3.8.",
+    "Spec inconsistency: crJSON §3.5.2 requires the b64' prefix on hash values, while its §3.5.1 example omits it; this follows §3.5.2."
+  ],
+  "manifest": {
+    "@context": {
+      "@vocab": "https://c2pa.org/crjson",
+      "extras": "https://c2pa.org/crjson/extras"
+    },
+    "jsonGenerator": {
+      "name": "{{JSON_GENERATOR_NAME}}",
+      "version": "{{JSON_GENERATOR_VERSION}}"
+    },
+    "manifests": [
+      {
+        "label": "{{MANIFEST_URN}}",
+        "claim.v2": {
+          "instanceID": "{{INSTANCE_ID}}",
+          "claim_generator_info": {
+            "name": "{{GENERATOR_NAME}}",
+            "version": "{{GENERATOR_VERSION}}"
+          },
+          "signature": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
+          "alg": "SHA-256",
+          "specVersion": "2.4.0",
+          "created_assertions": [
+            {
+              "url": "self#jumbf=c2pa.assertions/c2pa.actions.v2",
+              "hash": "{{HASH:c2pa.actions.v2}}"
+            },
+            {
+              "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
+              "hash": "{{HASH:c2pa.hash.data}}"
+            },
+            {
+              "url": "self#jumbf=c2pa.assertions/{{NS}}.statement",
+              "hash": "{{HASH:statement}}"
+            }
+          ],
+          "gathered_assertions": [],
+          "redacted_assertions": []
+        },
+        "assertions": {
+          "c2pa.actions.v2": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "when": "{{CREATED_WHEN}}",
+                "softwareAgent": {
+                  "name": "{{GENERATOR_NAME}}",
+                  "version": "{{GENERATOR_VERSION}}"
+                },
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+              }
+            ]
+          },
+          "c2pa.hash.data": {
+            "alg": "sha256",
+            "hash": "{{HASH:asset}}",
+            "name": "jumbf manifest"
+          },
+          "{{NS}}.statement": {
+            "@context": {
+              "schema": "https://schema.org/"
+            },
+            "@type": "schema:Claim",
+            "schema:text": "{{STATEMENT}}",
+            "schema:isBasedOn": {
+              "@type": "schema:Quotation",
+              "schema:text": "{{SOURCE_QUOTE}}"
+            }
+          }
+        },
+        "signature": {
+          "algorithm": "ES256",
+          "certificateInfo": {
+            "serialNumber": "{{CERT_SERIAL}}",
+            "subject": {
+              "C": "{{SIGNER_COUNTRY}}",
+              "O": "{{SIGNER_ORG}}",
+              "CN": "{{SIGNER_CN}}"
+            },
+            "issuer": {
+              "C": "{{ISSUER_COUNTRY}}",
+              "O": "{{ISSUER_ORG}}",
+              "CN": "{{ISSUER_CN}}"
+            },
+            "validity": {
+              "notBefore": "{{CERT_NOT_BEFORE}}",
+              "notAfter": "{{CERT_NOT_AFTER}}"
+            }
+          }
+        },
+        "validationResults": {
+          "success": [
+            {
+              "code": "claimSignature.insideValidity",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
+              "explanation": "claim signature valid"
+            },
+            {
+              "code": "claimSignature.validated",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
+              "explanation": "claim signature valid"
+            },
+            {
+              "code": "signingCredential.trusted",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
+              "explanation": "signing certificate trusted"
+            },
+            {
+              "code": "assertion.hashedURI.match",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.actions.v2",
+              "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
+            },
+            {
+              "code": "assertion.hashedURI.match",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.hash.data",
+              "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
+            },
+            {
+              "code": "assertion.hashedURI.match",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/{{NS}}.statement",
+              "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/{{NS}}.statement"
+            },
+            {
+              "code": "assertion.dataHash.match",
+              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.hash.data",
+              "explanation": "data hash valid"
+            }
+          ],
+          "informational": [],
+          "failure": [],
+          "validationTime": "{{VALIDATION_TIME}}"
+        }
+      }
+    ]
+  }
+}
