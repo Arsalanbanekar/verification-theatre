@@ -7,7 +7,7 @@ Status: pre-registered, awaiting data collection from 13 Nov 2026.
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
 Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
-H5 restated; baseline stratification corrected. See §12.
+H5 restated; baseline stratification corrected. Rev 3.1: wording correction in §3. See §12.
 
 ---
 
@@ -87,9 +87,11 @@ may normalise these, and the divergence is recorded).
 **Realness probe (8 Nov 2026, `corpus/realness_probe.json`).** A closed-book model outside the
 study, shown all 20 true claims side by side and told some were fabricated, labelled every
 invented claim fabricated (confidence 85–90) and every real claim real (72–76). Every stated
-basis was recognition or non-recognition of the named organisation, not style or content.
-This cannot be fixed by renaming: an invented organisation is by construction one the model
-does not know. The claim-type factor is therefore interpreted as **recognised vs unrecognised
+basis cited recognition or non-recognition of the named organisation; some also cited
+secondary cues — six of the ten invented-claim reasons called the name "invented-sounding",
+and most real-claim reasons noted a familiar document format or an unusually specific detail.
+Recognition is the deciding factor in every case, and it cannot be fixed by renaming: an
+invented organisation is by construction one the model does not know. The claim-type factor is therefore interpreted as **recognised vs unrecognised
 organisation**, not as "checkable vs uncheckable fact" (§5, H5). The probe is a stricter test
 than the study condition — side-by-side comparison plus an explicit hint that some items were
 fabricated — so C0 is the measure of how detectable invented claims are in the study itself.
@@ -345,3 +347,7 @@ All revisions precede data collection. Git history is the authoritative record.
   obscurity probe showed one was answerable by reasoning about UK council structure; §3
   permitted but did not require them, so no rule changed. No conditions, models, measures or
   primary comparisons were added or removed.
+- **Rev 3.1 (8 Nov 2026).** Wording correction in §3 only. Rev 3 said every probe basis was
+  organisation recognition "not style or content"; the probe record shows recognition decided
+  every answer but name style and document format appeared as secondary cues. No design
+  change.
