@@ -33,5 +33,12 @@ which files each one touched.
 |---|---|
 | `PREREGISTRATION.md` | Hypotheses, conditions, measures, analysis plan |
 | `CLAUDE.md` | Build instructions for the codebase |
+| `STATUS.md` | Progress, decisions, open issues, how to run |
 | `corpus/claims.jsonl` | Claim corpus: true/false twin pairs, invented and real-obscure |
 | `corpus/screen_names.py` | Near-collision screen for invented names |
+| `corpus/*_probe.json` | Closed-book corpus probes run on a model outside the study |
+| `corpus/conditions/` | Condition templates C0–C5 and the shared signer |
+| `corpus/rendered_examples/` | Exact prompts for two claims |
+| `src/` | Prompt builder, output schema, runner and provider clients |
+| `models.yaml` | Models, limits and request settings |
+| `tests/` | Offline tests for the builder, prompts and runner |

@@ -1,0 +1,84 @@
+# Study models, limits and request settings. Read by src/runner.py.
+# Provider docs read 2026-11-08: console.groq.com/docs (models, reasoning, structured-outputs,
+# rate-limits, api-reference) and ai.google.dev/gemini-api/docs (now served from aistudio.google.com).
+#
+# Reasoning: every model runs at the lowest reasoning setting its provider documents, logged
+# with every call. The settings are not identical in kind across providers: gpt-oss cannot
+# switch reasoning off ("low" is its floor), Qwen's floor "none" disables it, and Gemini's
+# "MINIMAL" is the lowest documented thinking level.
+
+defaults:
+  temperature: 0.7          # PREREGISTRATION.md §6
+  reps: 3
+  base_seed: 20261113       # per-call seeds and per-model order are derived from this
+  max_output_tokens: 1024
+  expected_output_tokens: 400   # used only to pace requests against TPM/TPD before usage is known
+  request_timeout_s: 120
+
+models:
+  gpt-oss-120b:
+    provider: groq
+    model_id: openai/gpt-oss-120b          # Production
+    tier: core
+    design: full
+    interpreter_arm: true                  # C1 and C2 with the interpreter (§8, core models only)
+    # Groq rate-limits table. Its models page shows different figures (1K RPM, 250K TPM), and the
+    # free-tier values were not in the fetched pages: check console.groq.com/settings/limits.
+    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    max_output_tokens: 2048                # reasoning tokens count against this
+    reasoning: {reasoning_effort: low, include_reasoning: true}   # "low" is the floor; reasoning cannot be disabled
+
+  gpt-oss-20b:
+    provider: groq
+    model_id: openai/gpt-oss-20b           # Production
+    tier: core
+    design: full
+    interpreter_arm: true
+    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    max_output_tokens: 2048
+    reasoning: {reasoning_effort: low, include_reasoning: true}
+
+  qwen3.8-27b:
+    provider: groq
+    model_id: qwen/qwen3.8-27b             # PREVIEW: "may be discontinued at short notice"
+    tier: core
+    design: full
+    interpreter_arm: true
+    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    # "none" is the lowest documented value ("Disable reasoning"). JSON mode requires
+    # reasoning_format parsed or hidden.
+    reasoning: {reasoning_effort: none, reasoning_format: parsed}
+
+  gemini-3.1-flash-lite:
+    provider: gemini
+    model_id: gemini-3.1-flash-lite        # Stable; shutdown no earlier than 7 May 2027
+    tier: replication
+    design: full
+    interpreter_arm: false
+    limits: {rpm: 15, rpd: 500, tpm: 250000}    # CLAUDE.md; the docs point to AI Studio's live page
+    # MINIMAL is the lowest documented level for Gemini 3 Flash models. Levels for 3.1 Flash-Lite
+    # are not documented: confirm in the pilot that this is accepted.
+    generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
+
+  gemini-3.5-flash-lite:
+    provider: gemini
+    model_id: gemini-3.5-flash-lite        # Stable
+    tier: replication
+    design: full
+    interpreter_arm: false
+    limits: {rpm: 15, rpd: 500, tpm: 250000}
+    generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
+
+  gemini-3.6-flash:
+    provider: gemini
+    model_id: gemini-3.6-flash             # Stable
+    tier: spot_check
+    design: spot_check
+    interpreter_arm: false
+    # 10 claims = 5 twin pairs drawn with seed 20261113 (3 real-obscure, 2 invented).
+    spot_check: {pairs: [real-01, real-03, real-10, inv-01, inv-06], conditions: [C0, C1]}
+    limits: {rpm: 5, rpd: 20, tpm: 250000}
+    # Temperature is "no longer supported and is silently ignored on Gemini 3.6 Flash and newer"
+    # and is due to become a 400 error, so it is not sent (protocol says 0.7; see STATUS.md).
+    temperature: null
+    generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
