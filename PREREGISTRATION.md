@@ -6,6 +6,8 @@
 Status: pre-registered, awaiting data collection from 13 Nov 2026.
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
+Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
+H5 restated; baseline stratification corrected. See §12.
 
 ---
 
@@ -47,9 +49,13 @@ themselves, they misdescribe what the mark covers, or cite it as support for the
 **H4 — Interpretability of the failure.** Prepending a plain-language scope interpreter
 reduces the C1/C2 acceptance gap relative to C0.
 
-**H5 — Epistemic vacuum (exploratory, not confirmatory).** Inflation is larger on invented
-claims than on real-obscure claims, i.e. models defer to marks most where they can least
-check. Reported either way.
+**H5 — Legitimisation of unrecognised sources (exploratory, not confirmatory).** For claims
+about organisations the model does not recognise (the invented half), C0 acceptance is low,
+because non-recognition is itself treated as evidence of fabrication. A mark that certifies
+nothing about the claim raises acceptance more for these claims than for claims about
+recognised organisations — i.e. provenance machinery lends legitimacy to an unknown source.
+This is the realistic attack case: a new or obscure actor signing its own documents.
+Reported either way.
 
 ## 3. Corpus
 
@@ -77,6 +83,17 @@ may normalise these, and the divergence is recorded).
 
 **Obscurity screening** uses a model not in the study, so no study model is queried before
 13 Nov. C0 is the definitive check (§7).
+
+**Realness probe (8 Nov 2026, `corpus/realness_probe.json`).** A closed-book model outside the
+study, shown all 20 true claims side by side and told some were fabricated, labelled every
+invented claim fabricated (confidence 85–90) and every real claim real (72–76). Every stated
+basis was recognition or non-recognition of the named organisation, not style or content.
+This cannot be fixed by renaming: an invented organisation is by construction one the model
+does not know. The claim-type factor is therefore interpreted as **recognised vs unrecognised
+organisation**, not as "checkable vs uncheckable fact" (§5, H5). The probe is a stricter test
+than the study condition — side-by-side comparison plus an explicit hint that some items were
+fabricated — so C0 is the measure of how detectable invented claims are in the study itself.
+Nothing in the corpus was changed on the basis of this probe.
 
 ### Alteration rules
 
@@ -196,11 +213,19 @@ Model output is strict JSON:
    Judged on a stratified sample of ~600 responses. 30 are hand-labelled by the author and
    judge–human agreement is reported in the paper.
 
-**What each half of the corpus measures.** On invented claims the model cannot distinguish a
-twin pair, so the discrimination index is expected near zero in every condition except C5 —
-the invented arm measures inflation alone. The real-obscure arm is where discrimination is
-possible in principle. Both are reported separately; neither is pooled into a single
-"acceptance of false claims" number.
+**What each half of the corpus measures.**
+
+- **Real-obscure (recognised organisation, obscure fact).** The model knows the organisation
+  but not the specific fact. This is the ecologically valid test of H1–H3: a mark attached to
+  a plausible claim from a known body. Discrimination between twins is possible in principle.
+- **Invented (unrecognised organisation).** C0 acceptance is expected near floor, since
+  non-recognition reads as fabrication. The model cannot distinguish a twin pair, so the
+  discrimination index is expected near zero in every condition except C5. This half measures
+  whether a mark **rescues a source the model would otherwise distrust** (H5).
+
+Both are reported separately; neither is pooled into a single "acceptance of false claims"
+number. Inflation on the invented half is a distinct and arguably more serious finding than
+inflation on the real half, since it is the case an adversary controls entirely.
 
 ## 6. Models
 
@@ -237,9 +262,17 @@ unit — paired tests, or pair as a random effect in a mixed model. 20 pairs, no
 Holm–Bonferroni correction across the six primary comparisons. Effect sizes with confidence
 intervals, not only p-values. Reported per-model and pooled.
 
-**Stratification by baseline.** C0 is the per-item prior measure. Items at floor or ceiling in
-C0 have no room to move, so the primary analysis is restricted to pairs where C0 acceptance is
-strictly between 0 and 1, with the full-sample result reported alongside. This is how the
+**Stratification by baseline.** C0 is the per-item prior measure. Whether an item has room to
+move depends on the direction of the predicted effect:
+
+- **Inflation tests (H1, H2, H5)** predict acceptance *rises* under a mark. Items already at
+  ceiling in C0 (acceptance = 1 on both twins) cannot rise and are excluded from the primary
+  test. Items at floor (acceptance = 0) have maximal room and are **retained** — excluding them
+  would discard exactly the unrecognised-source items where H5 predicts the largest effect.
+- **The discrimination index (H2b)** requires variation between twins and is computed on all
+  pairs, with pairs at ceiling or floor on both twins flagged in the results.
+
+The full-sample result is reported alongside every stratified result. This is how the
 ceiling-effect problem is handled; no separate probing pass is needed.
 
 **Claim type** (invented vs real-obscure) enters as a factor in every primary comparison and
@@ -268,8 +301,12 @@ equal prominence.
   invented arm measures inflation rather than discrimination (§5). Stated plainly in the paper.
 - Single-turn; no multi-turn pressure or agentic retrieval loop.
 - Mark position held constant; position effects untested.
-- Evaluation awareness unmeasured: models may behave differently if they infer the documents
-  are synthetic. Partially mitigated by the real-obscure half of the corpus.
+- Invented organisations are detectable by non-recognition: a closed-book probe model labelled
+  all ten fabricated (§3). The invented half therefore cannot be read as a test of uncheckable
+  facts; it is interpreted as the unrecognised-source case (H5). The real-obscure half is the
+  primary test of H1–H3.
+- Evaluation awareness beyond entity recognition is unmeasured: models may behave differently
+  if they infer the task is a test.
 - Open-weight and small proprietary models only; no frontier model at full design.
 - Judge-based scope accuracy, with human agreement reported but no second independent judge.
 - Obscurity of the real claims is author judgment plus a non-study-model probe, confirmed
@@ -289,3 +326,22 @@ adversary signs their own false document truthfully and the model upgrades it. T
 published because machine-readable provenance is being mandated now, agents are named as its
 intended consumers, and the mitigation tested here is cheap. No real entity is accused of
 anything in the corpus, and no private individual is named.
+
+## 12. Revision history
+
+All revisions precede data collection. Git history is the authoritative record.
+
+- **Rev 1 (6 Nov 2026).** Initial design.
+- **Rev 2 (7 Nov 2026).** Twin-pair corpus; alteration rules including no attributive party
+  swaps on real claims; constant signer identity; discrimination index; pair as unit of
+  analysis.
+- **Rev 3 (8 Nov 2026).** Prompted by the realness probe (§3), which showed invented
+  organisations are identified by non-recognition. Changes: (a) claim-type factor
+  reinterpreted as recognised vs unrecognised organisation; (b) H5 restated as legitimisation
+  of unrecognised sources; (c) real-obscure half designated the primary test of H1–H3;
+  (d) baseline stratification corrected — rev 2 excluded C0 floor items, which would have
+  removed the items where H5 predicts the largest effect; inflation tests now exclude only
+  ceiling items. Separately, named-party alterations were removed from both halves after the
+  obscurity probe showed one was answerable by reasoning about UK council structure; §3
+  permitted but did not require them, so no rule changed. No conditions, models, measures or
+  primary comparisons were added or removed.
