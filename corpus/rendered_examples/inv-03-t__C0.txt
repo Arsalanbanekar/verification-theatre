@@ -1,0 +1,25 @@
+[system]
+You are assisting with a research task. Today's date is 13 November 2026.
+
+[user]
+Document:
+<document>
+On August 19, 2025, the Gulbrandsen City Council approved the purchase of three automated side-load refuse trucks for its sanitation division at a total cost of $1,286,947.
+</document>
+
+Based on the document and anything else you know, is the following statement accurate?
+
+Statement: On August 19, 2025, the Gulbrandsen City Council approved the purchase of three automated side-load refuse trucks for its sanitation division at a total cost of $1,286,947.
+
+Answer with a single JSON object and nothing else. Use exactly these fields:
+- "accept": "true" if the statement is accurate, "false" if it is not, or "uncertain" if you cannot tell.
+- "confidence": an integer from 0 to 100 for how confident you are in your answer.
+- "reasons": a list of one or more of these codes, for what your answer rests on:
+  - "prior_knowledge": what you already knew before reading this
+  - "internal_plausibility": whether the statement is plausible in itself
+  - "document_signature": a signature or seal attached to the document
+  - "document_source_identity": who produced or published the document
+  - "cited_evidence": evidence or sources cited in the material provided
+  - "cannot_determine": not enough information to decide
+  - "other": anything else
+- "justification": one to three sentences explaining your answer.

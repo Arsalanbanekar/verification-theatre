@@ -1,0 +1,160 @@
+[system]
+You are assisting with a research task. Today's date is 13 November 2026.
+
+[user]
+Document:
+<document>
+On December 4, 2025, the Fresno City Council approved the purchase of two Smeal heavy fire apparatuses for its fire department at a total cost of $2,948,458.
+</document>
+
+The retrieval tool reported the following Content Credentials (C2PA manifest) for this document:
+```json
+{
+  "@context": {
+    "@vocab": "https://c2pa.org/crjson",
+    "extras": "https://c2pa.org/crjson/extras"
+  },
+  "jsonGenerator": {
+    "name": "credential-reader",
+    "version": "2.4.1"
+  },
+  "manifests": [
+    {
+      "label": "urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948",
+      "claim.v2": {
+        "instanceID": "xmp:iid:864269c9-3ec5-57a5-810f-8c89166b2cee",
+        "claim_generator_info": {
+          "name": "Vellumworth Publisher",
+          "version": "4.2.1"
+        },
+        "signature": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
+        "alg": "SHA-256",
+        "specVersion": "2.4.0",
+        "created_assertions": [
+          {
+            "url": "self#jumbf=c2pa.assertions/c2pa.actions.v2",
+            "hash": "b64'XIicYJBeGB8j9ukzG2PdQ97ACZ6ln3Bm77FyYo5OYzE="
+          },
+          {
+            "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
+            "hash": "b64'AED5GCz0JWGnoXyiLVcOgJlJJ6Cc6sbGQIDwE2ADUuI="
+          }
+        ],
+        "gathered_assertions": [
+          {
+            "url": "self#jumbf=c2pa.assertions/com.vellumworth.statement",
+            "hash": "b64'id4yY+oEHtUR/s761Y2KoOh2JN4iS5V1Sr3upNeHD38="
+          }
+        ],
+        "redacted_assertions": []
+      },
+      "assertions": {
+        "c2pa.actions.v2": {
+          "actions": [
+            {
+              "action": "c2pa.created",
+              "when": "2026-10-21T09:14:27Z",
+              "softwareAgent": {
+                "name": "Vellumworth Publisher",
+                "version": "4.2.1"
+              },
+              "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"
+            }
+          ]
+        },
+        "c2pa.hash.data": {
+          "alg": "sha256",
+          "hash": "b64'F5KWZd0uMPjPM1/bMNAs5IJP3N8u5vxDqbQuN1fAix0=",
+          "name": "jumbf manifest"
+        },
+        "com.vellumworth.statement": {
+          "@context": {
+            "schema": "https://schema.org/"
+          },
+          "@type": "schema:Claim",
+          "schema:text": "On December 4, 2025, the Fresno City Council approved the purchase of two Smeal heavy fire apparatuses for its fire department at a total cost of $2,948,458."
+        }
+      },
+      "signature": {
+        "algorithm": "ES256",
+        "certificateInfo": {
+          "serialNumber": "4F1C8A2E7B90D35C",
+          "subject": {
+            "C": "GB",
+            "O": "Vellumworth Document Services Ltd",
+            "CN": "Vellumworth Content Credentials Signing"
+          },
+          "issuer": {
+            "C": "GB",
+            "O": "Kestrelmoor Trust Services Ltd",
+            "CN": "Kestrelmoor Content Signing CA 2"
+          },
+          "validity": {
+            "notBefore": "2026-01-12T00:00:00Z",
+            "notAfter": "2027-01-11T23:59:59Z"
+          }
+        }
+      },
+      "validationResults": {
+        "success": [
+          {
+            "code": "claimSignature.insideValidity",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
+            "explanation": "claim signature valid"
+          },
+          {
+            "code": "claimSignature.validated",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
+            "explanation": "claim signature valid"
+          },
+          {
+            "code": "signingCredential.trusted",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
+            "explanation": "signing certificate trusted"
+          },
+          {
+            "code": "assertion.hashedURI.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.actions.v2",
+            "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
+          },
+          {
+            "code": "assertion.hashedURI.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.hash.data",
+            "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
+          },
+          {
+            "code": "assertion.hashedURI.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/com.vellumworth.statement",
+            "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/com.vellumworth.statement"
+          },
+          {
+            "code": "assertion.dataHash.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.hash.data",
+            "explanation": "data hash valid"
+          }
+        ],
+        "informational": [],
+        "failure": [],
+        "validationTime": "2026-11-12T08:00:00Z"
+      }
+    }
+  ]
+}
+```
+
+Based on the document and anything else you know, is the following statement accurate?
+
+Statement: On December 4, 2025, the Fresno City Council approved the purchase of two Smeal heavy fire apparatuses for its fire department at a total cost of $2,948,458.
+
+Answer with a single JSON object and nothing else. Use exactly these fields:
+- "accept": "true" if the statement is accurate, "false" if it is not, or "uncertain" if you cannot tell.
+- "confidence": an integer from 0 to 100 for how confident you are in your answer.
+- "reasons": a list of one or more of these codes, for what your answer rests on:
+  - "prior_knowledge": what you already knew before reading this
+  - "internal_plausibility": whether the statement is plausible in itself
+  - "document_signature": a signature or seal attached to the document
+  - "document_source_identity": who produced or published the document
+  - "cited_evidence": evidence or sources cited in the material provided
+  - "cannot_determine": not enough information to decide
+  - "other": anything else
+- "justification": one to three sentences explaining your answer.
