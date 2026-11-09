@@ -1,0 +1,1213 @@
+"""Analysis per PREREGISTRATION.md §7 (rev 3.2). Reads data/raw and data/graded; never data/pilot.
+
+  python src/analyse.py                         -> data/results/
+  python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/graded \
+      --out data/synthetic/results              (rehearsal on fake data)
+
+Outputs: CSV tables, four figures, results_summary.md (ready-to-paste text for every {PLACEHOLDER}
+in REPORT_DRAFT.md) and REPORT_DRAFT.filled.md (the draft with those slots substituted, to check).
+
+Operational choices. The pre-registration leaves these open; they were fixed here before any data:
+- Unit: the twin pair (§7). A claim's value in a condition is its mean over reps; a pair's value is
+  the mean of its twins, or true minus false for the discrimination index. Pooled results average
+  each pair's per-model values with equal weight per model.
+- Tests: paired t-tests over pairs, two-sided, with 95% t-intervals (one-sample for H3, Welch for
+  H5). Robustness: sign-flip permutation p-values over the same pair differences (exact for <= 16
+  pairs, else 20,000 seeded flips), Holm-adjusted the same way; results_summary.md flags any primary
+  test where the two disagree about significance. (With 10 pairs the exact test cannot go below
+  p = 2/1024, which is why it is the check rather than the primary.)
+- Primary family. The six pre-registered comparisons contain eight tests: H1 C1 vs C0 acceptance;
+  H2 C3 vs C2 acceptance and C3 vs C2 confidence; H2 C4 vs C1 and C4 vs C3 acceptance; H2b
+  discrimination index C5 vs C0 (the positive control); H3 share of credential-mentioning
+  justifications scored 2, against 50%; H4 interpreter vs none on C1 and C2 pooled. Holm runs over
+  all eight, which is at least as strict as over six, separately in each reporting scope (pooled
+  and each model) and each claim-type set (real-obscure, invented, all pairs).
+- C0 ceiling (§7): inflation tests (H1, H2, H5) drop pairs whose twins were both accepted in every
+  C0 response in that scope; the full-sample result is reported alongside. H2b, H3 and H4 use all
+  pairs. "Flat across C0-C4" for H2b is shown by the C1-C4 mean vs C0, with its CI (not in Holm).
+- H3 "low": fewer than half of the justifications that mention the credential describe its scope
+  correctly (score 2). Justifications scored NA (no mention) are excluded.
+- Headline numbers: the real-obscure half for H1-H3 and H2b (rev 3); all pairs for H4; invented
+  minus real-obscure C1-C0 for H5 (exploratory, unadjusted, not in Holm).
+- Descriptive 95% CIs (acceptance by condition, discrimination index): t-intervals over claims or
+  pairs, clipped to the possible range.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import itertools
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy import stats as sps
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src import grade as G
+from src import runner as R
+
+REPO = R.REPO
+DATA = REPO / "data"
+CONDITIONS = ("C0", "C1", "C2", "C3", "C4", "C5")
+MARKED = ("C1", "C2", "C3", "C4")
+TYPES = ("real_obscure", "invented")
+TYPE_SETS = {"all": TYPES, "real_obscure": ("real_obscure",), "invented": ("invented",)}
+TYPE_LABEL = {"real_obscure": "real-obscure", "invented": "invented", "all": "all pairs"}
+B_PERM, EXACT_MAX, SEED, ALPHA = 20000, 16, 20261113, 0.05
+MINUS = "−"
+NO_VALUE = "NO AUTOMATIC VALUE: fill by hand from the tables below."
+
+# Chart tokens: the dataviz reference palette on a light surface (categorical blue/orange; the
+# ordinal blue ramp for scores 0-2). Checked with the palette validator: all checks pass.
+INK, INK2, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#fcfcfb"
+BLUE, ORANGE = "#2a78d6", "#eb6834"
+SCORE_COLORS = {"0": "#86b6ef", "1": "#2a78d6", "2": "#104281", "NA": "#c8c7c0"}
+
+
+# ---------------------------------------------------------------- loading
+
+def load_responses(raw_dir: Path, models) -> pd.DataFrame:
+    rows = [{**G.metrics_row(r), "synthetic": bool(r.get("synthetic"))} for r in G.final_responses(raw_dir, models)]
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    for col_name in ("accepted", "confidence", "mark_cited", "abstained", "rep"):
+        df[col_name] = pd.to_numeric(df[col_name], errors="coerce")
+    df["truth_value"] = df["truth_value"].astype(bool)
+    df["interpreter"] = df["interpreter"].astype(bool)
+    return df
+
+
+def human_label_files(graded_dir: Path) -> list[tuple[int, Path]]:
+    out = []
+    for p in Path(graded_dir).glob("human_labels_*.csv"):
+        m = re.fullmatch(r"human_labels_(\d+)", p.stem)
+        if m:
+            out.append((int(m.group(1)), p))
+    return sorted(out)
+
+
+def scope_source(graded_dir: Path, pilot_dir: Path, requested: str = "auto") -> str:
+    """judge if it passed the pilot and has scores; human (the 150-item fallback) if it failed."""
+    if requested != "auto":
+        return requested
+    passed = G.pilot_judge_passed(pilot_dir)
+    if passed is False:
+        return "human" if human_label_files(graded_dir) else "none"
+    if any(j.get("valid") for j in G.latest_judgements(graded_dir).values()):
+        return "judge"
+    return "human" if any(n >= 150 for n, _ in human_label_files(graded_dir)) else "none"
+
+
+def load_scope(graded_dir: Path, source: str) -> pd.DataFrame:
+    rows = []
+    if source == "judge":
+        rows = [{"response_id": k, "score": str(j["score"])} for k, j in G.latest_judgements(graded_dir).items()
+                if j.get("valid")]
+    elif source == "human":
+        files = human_label_files(graded_dir)
+        if files:  # the largest set: the 150-item fallback when it exists
+            rows = [{"response_id": r["response_id"], "score": r["human_score"]} for r in G.read_csv(files[-1][1])]
+    return pd.DataFrame(rows, columns=["response_id", "score"])
+
+
+# ---------------------------------------------------------------- pair-level values
+
+def pair_values(df: pd.DataFrame, models, interpreter: bool, which, measure: str = "accepted") -> pd.DataFrame:
+    """Index (pair_id, claim_type); one column per condition.
+    which: 'both' (mean of twins), True / False (one twin), or 'disc' (true minus false)."""
+    d = df[df["model"].isin(models) & (df["interpreter"] == interpreter)].dropna(subset=[measure])
+    if d.empty:
+        return pd.DataFrame()
+    claim = d.groupby(["model", "pair_id", "claim_type", "truth_value", "condition"])[measure].mean()
+    keys = ["model", "pair_id", "claim_type", "condition"]
+    if which == "both":
+        v = claim.groupby(keys).mean()
+    elif which == "disc":
+        c = claim.unstack("truth_value")
+        if True not in c.columns or False not in c.columns:
+            return pd.DataFrame()
+        v = (c[True] - c[False]).dropna()
+    else:
+        try:
+            v = claim.xs(which, level="truth_value")
+        except KeyError:
+            return pd.DataFrame()
+    if v.empty:
+        return pd.DataFrame()
+    return v.groupby(["pair_id", "claim_type", "condition"]).mean().unstack("condition")
+
+
+def ceiling_pairs(df, models) -> set:
+    """Pairs whose twins were both accepted in every C0 response (in this model scope)."""
+    w = pair_values(df, models, False, "both")
+    if w.empty or "C0" not in w:
+        return set()
+    return {idx[0] for idx, v in w["C0"].items() if v >= 1 - 1e-12}
+
+
+def subset(wide: pd.DataFrame, types, drop=()) -> pd.DataFrame:
+    if wide.empty:
+        return wide
+    return wide.loc[[i for i in wide.index if i[1] in types and i[0] not in drop]]
+
+
+def col(w: pd.DataFrame, c) -> pd.Series:
+    return w[c] if (not w.empty and c in w) else pd.Series(dtype=float)
+
+
+# ---------------------------------------------------------------- statistics
+
+def signflip_p(x, rng, center: float = 0.0) -> float:
+    x = np.asarray(x, float) - center
+    n = len(x)
+    if n == 0:
+        return float("nan")
+    obs = abs(x.mean())
+    if n <= EXACT_MAX:
+        signs = np.array(list(itertools.product((-1.0, 1.0), repeat=n)))
+        return float(np.mean(np.abs(signs @ x / n) >= obs - 1e-12))
+    signs = rng.choice((-1.0, 1.0), size=(B_PERM, n))
+    return float((np.sum(np.abs(signs @ x / n) >= obs - 1e-12) + 1) / (B_PERM + 1))
+
+
+def min_p(n: int) -> float:
+    """Smallest two-sided p the sign-flip test can return with n pairs."""
+    if n == 0:
+        return float("nan")
+    return 2 / 2 ** n if n <= EXACT_MAX else 1 / (B_PERM + 1)
+
+
+def t_ci(x, lo_bound=-np.inf, hi_bound=np.inf) -> tuple[float, float]:
+    """95% t-interval for a mean, clipped to the possible range."""
+    x = np.asarray(x, float)
+    n = len(x)
+    if n < 2:
+        return float("nan"), float("nan")
+    half = sps.t.ppf(0.975, n - 1) * x.std(ddof=1) / np.sqrt(n)
+    m = x.mean()
+    return float(max(lo_bound, m - half)), float(min(hi_bound, m + half))
+
+
+def t_test(x, center: float = 0.0) -> tuple[float, float, float, float]:
+    """mean, CI low, CI high, two-sided p for H0: mean == center."""
+    x = np.asarray(x, float)
+    n, m = len(x), float(np.mean(x)) if len(x) else float("nan")
+    if n < 2:
+        return m, float("nan"), float("nan"), float("nan")
+    se = x.std(ddof=1) / np.sqrt(n)
+    lo, hi = t_ci(x)
+    if se <= 1e-12:  # every pair moved by the same amount (up to rounding)
+        return m, lo, hi, (1.0 if abs(m - center) <= 1e-12 else 0.0)
+    return m, lo, hi, float(2 * sps.t.sf(abs((m - center) / se), n - 1))
+
+
+EMPTY = {"n_pairs": 0, "delta": np.nan, "ci_low": np.nan, "ci_high": np.nan, "p": np.nan,
+         "p_perm": np.nan, "p_perm_min": np.nan, "sd": np.nan}
+
+
+def one_sample(x, center: float, rng) -> dict:
+    x = pd.Series(x, dtype=float).dropna()
+    if x.empty:
+        return dict(EMPTY)
+    m, lo, hi, p = t_test(x.values, center)
+    return {"n_pairs": len(x), "delta": m, "ci_low": lo, "ci_high": hi, "p": p,
+            "p_perm": signflip_p(x.values, rng, center), "p_perm_min": min_p(len(x)),
+            "sd": float(x.std(ddof=1)) if len(x) > 1 else np.nan}
+
+
+def minus(b: pd.Series, a: pd.Series) -> pd.Series:
+    """b - a over pairs present in both (empty if either side has no data)."""
+    if len(a) == 0 or len(b) == 0:
+        return pd.Series(dtype=float)
+    return (b - a).dropna()
+
+
+def paired(a: pd.Series, b: pd.Series, rng) -> dict:
+    """b minus a over pairs present in both."""
+    return one_sample(minus(b, a), 0.0, rng)
+
+
+def holm(ps) -> list[float]:
+    idx = [i for i, p in enumerate(ps) if p == p]  # NaN (no data) takes no part
+    order = sorted(idx, key=lambda i: ps[i])
+    out, running, m = [float("nan")] * len(ps), 0.0, len(order)
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * ps[i]))
+        out[i] = running
+    return out
+
+
+# ---------------------------------------------------------------- the primary family
+
+def scope_pairs(df, scope, models, types) -> pd.Series:
+    """Per pair: share of credential-mentioning C1-C4 justifications scored 2 (main arm)."""
+    if scope.empty:
+        return pd.Series(dtype=float)
+    d = df[df["model"].isin(models) & ~df["interpreter"] & df["condition"].isin(MARKED)
+           & df["claim_type"].isin(types)].merge(scope, on="response_id")
+    d = d[d["score"] != "NA"]
+    if d.empty:
+        return pd.Series(dtype=float)
+    d = d.assign(correct=(d["score"] == "2").astype(float))
+    return d.groupby(["model", "pair_id", "claim_type"])["correct"].mean().groupby(["pair_id", "claim_type"]).mean()
+
+
+def primary_family(df, scope, models, types, rng) -> list[dict]:
+    rows = []
+    both = pair_values(df, models, False, "both")
+    conf = pair_values(df, models, False, "both", "confidence")
+    disc = pair_values(df, models, False, "disc")
+    drop = ceiling_pairs(df, models)
+
+    def add(h, comparison, measure, unit, res, sample, primary=True):
+        dropped = len(drop & set(i[0] for i in subset(both, types).index)) if "dropped" in sample else 0
+        rows.append({"hypothesis": h, "comparison": comparison, "measure": measure, "unit": unit,
+                     "sample": sample, "primary": primary, "n_ceiling_dropped": dropped, **res})
+
+    strat, full = subset(both, types, drop), subset(both, types)
+    for h, a, b in (("H1", "C0", "C1"), ("H2", "C2", "C3"), ("H2", "C1", "C4"), ("H2", "C3", "C4")):
+        add(h, f"{b} vs {a}", "acceptance", "pp", paired(col(strat, a), col(strat, b), rng), "C0-ceiling pairs dropped")
+        add(h, f"{b} vs {a}", "acceptance", "pp", paired(col(full, a), col(full, b), rng), "all pairs", primary=False)
+        if (a, b) == ("C2", "C3"):
+            sc, fc = subset(conf, types, drop), subset(conf, types)
+            add(h, "C3 vs C2", "confidence", "conf", paired(col(sc, "C2"), col(sc, "C3"), rng), "C0-ceiling pairs dropped")
+            add(h, "C3 vs C2", "confidence", "conf", paired(col(fc, "C2"), col(fc, "C3"), rng), "all pairs", primary=False)
+    ds = subset(disc, types)
+    add("H2b", "C5 vs C0", "discrimination index", "pp", paired(col(ds, "C0"), col(ds, "C5"), rng), "all pairs")
+    marked = ds[[c for c in MARKED if c in ds]].mean(axis=1) if not ds.empty else pd.Series(dtype=float)
+    add("H2b", "C1-C4 mean vs C0", "discrimination index", "pp", paired(col(ds, "C0"), marked, rng), "all pairs",
+        primary=False)
+    add("H3", "C1-C4 vs 50%", "share of credential mentions scored 2", "share",
+        one_sample(scope_pairs(df, scope, models, types), 0.5, rng), "all pairs")
+    interp_models = [m for m in models if ((df["model"] == m) & df["interpreter"]).any()]
+    res = dict(EMPTY)
+    if interp_models:
+        none = subset(pair_values(df, interp_models, False, "both"), types)
+        withi = subset(pair_values(df, interp_models, True, "both"), types)
+        a = none[[c for c in ("C1", "C2") if c in none]].mean(axis=1) if not none.empty else pd.Series(dtype=float)
+        b = withi[[c for c in ("C1", "C2") if c in withi]].mean(axis=1) if not withi.empty else pd.Series(dtype=float)
+        res = paired(a, b, rng)
+        gap = minus(a, col(none, "C0"))
+        res["gap_without_interpreter"] = float(gap.mean()) if len(gap) else np.nan
+    add("H4", "interpreter vs none (C1, C2)", "acceptance", "pp", res, "all pairs")
+    prim = [r for r in rows if r["primary"]]
+    for key in ("p", "p_perm"):
+        for r, ph in zip(prim, holm([r[key] for r in prim])):
+            r[f"{key}_holm"] = ph
+    for r in rows:
+        r.setdefault("p_holm", np.nan)
+        r.setdefault("p_perm_holm", np.nan)
+    return rows
+
+
+def h5(df, models, rng) -> dict:
+    """Exploratory: C1 - C0 acceptance on invented pairs minus the same on real-obscure pairs."""
+    w = subset(pair_values(df, models, False, "both"), TYPES, ceiling_pairs(df, models))
+    if w.empty or "C1" not in w or "C0" not in w:
+        return {}
+    d = (w["C1"] - w["C0"]).dropna()
+    inv = d[[i[1] == "invented" for i in d.index]].values
+    real = d[[i[1] == "real_obscure" for i in d.index]].values
+    if len(inv) == 0 or len(real) == 0:
+        return {}
+    obs = float(inv.mean() - real.mean())
+    va = inv.var(ddof=1) / len(inv) if len(inv) > 1 else np.nan
+    vb = real.var(ddof=1) / len(real) if len(real) > 1 else np.nan
+    se = np.sqrt(va + vb)
+    if se > 0:  # Welch
+        dof = (va + vb) ** 2 / ((va ** 2 / (len(inv) - 1) if va else 0) + (vb ** 2 / (len(real) - 1) if vb else 0))
+        half, p = sps.t.ppf(0.975, dof) * se, float(2 * sps.t.sf(abs(obs) / se, dof))
+    else:
+        half, p = (0.0, 1.0 if obs == 0 else 0.0) if se == 0 else (np.nan, np.nan)
+    pooled, n_perm = np.concatenate([inv, real]), B_PERM // 4
+    perm = np.empty(n_perm)
+    for k in range(n_perm):
+        s = rng.permutation(pooled)
+        perm[k] = s[:len(inv)].mean() - s[len(inv):].mean()
+    i, r = one_sample(inv, 0.0, rng), one_sample(real, 0.0, rng)
+    return {"n_invented": len(inv), "n_real": len(real),
+            "invented_delta": i["delta"], "invented_ci_low": i["ci_low"], "invented_ci_high": i["ci_high"],
+            "invented_p": i["p"], "invented_p_perm": i["p_perm"],
+            "real_delta": r["delta"], "real_ci_low": r["ci_low"], "real_ci_high": r["ci_high"], "real_p": r["p"],
+            "difference": obs, "ci_low": obs - half, "ci_high": obs + half, "p": p,
+            "p_perm": float((np.sum(np.abs(perm) >= abs(obs) - 1e-12) + 1) / (n_perm + 1))}
+
+
+# ---------------------------------------------------------------- descriptive tables
+
+def acceptance_table(df) -> pd.DataFrame:
+    d = df.dropna(subset=["accepted"])
+    keys = ["claim_type", "truth_value", "condition"]
+    cols = ["model", "interpreter"] + keys + ["n_responses", "n_claims", "acceptance", "ci_low", "ci_high"]
+    out = []
+    claim = d.groupby(["model", "interpreter"] + keys + ["claim_id"])["accepted"].mean()
+    n_resp = d.groupby(["model", "interpreter"] + keys).size()
+    for k, s in claim.groupby(level=[0, 1, 2, 3, 4]):
+        lo, hi = t_ci(s.values, 0.0, 1.0)
+        out.append(dict(zip(["model", "interpreter"] + keys, k), n_responses=int(n_resp[k]), n_claims=len(s),
+                        acceptance=float(s.mean()), ci_low=lo, ci_high=hi))
+    main = d[~d["interpreter"]]
+    if len(main):
+        pooled = main.groupby(["model"] + keys + ["claim_id"])["accepted"].mean().groupby(keys + ["claim_id"]).mean()
+        n_main = main.groupby(keys).size()
+        for k, s in pooled.groupby(level=[0, 1, 2]):
+            lo, hi = t_ci(s.values, 0.0, 1.0)
+            out.append(dict(zip(keys, k), model="pooled", interpreter=False, n_responses=int(n_main[k]),
+                            n_claims=len(s), acceptance=float(s.mean()), ci_low=lo, ci_high=hi))
+    return pd.DataFrame(out, columns=cols)
+
+
+def discrimination_table(df, models) -> pd.DataFrame:
+    out = []
+    for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
+        w = pair_values(df, ms, False, "disc")
+        t, f = pair_values(df, ms, False, True), pair_values(df, ms, False, False)
+        for ctype, types in TYPE_SETS.items():
+            s, st, sf = subset(w, types), subset(t, types), subset(f, types)
+            for cond in CONDITIONS:
+                x = col(s, cond).dropna()
+                if x.empty:
+                    continue
+                lo, hi = t_ci(x.values, -1.0, 1.0)
+                tt = col(st, cond)
+                ff = col(sf, cond).reindex(tt.index)
+                out.append({"scope": scope_name, "claim_type": ctype, "condition": cond, "n_pairs": len(x),
+                            "discrimination": float(x.mean()), "ci_low": lo, "ci_high": hi,
+                            "pairs_both_twins_at_floor": int(((tt <= 0) & (ff <= 0)).sum()),
+                            "pairs_both_twins_at_ceiling": int(((tt >= 1) & (ff >= 1)).sum())})
+    return pd.DataFrame(out)
+
+
+def rates_table(df) -> pd.DataFrame:
+    d = df[~df["interpreter"]].dropna(subset=["accepted"])
+    groups = [((m, c), g) for (m, c), g in d.groupby(["model", "condition"])]
+    groups += [(("pooled", c), d[d["condition"] == c]) for c in CONDITIONS if (d["condition"] == c).any()]
+    return pd.DataFrame([{"scope": s, "condition": c, "n": len(g),
+                          "credential_citation_rate": g["mark_cited"].mean(), "abstention_rate": g["abstained"].mean(),
+                          "mean_confidence": g["confidence"].mean()} for (s, c), g in groups])
+
+
+def confidence_delta_table(df) -> pd.DataFrame:
+    d = df[~df["interpreter"]].dropna(subset=["confidence"])
+    base = d[d["condition"] == "C0"].groupby(["model", "claim_id"])["confidence"].mean().rename("c0_mean")
+    d = d.join(base, on=["model", "claim_id"])
+    d = d.assign(delta=d["confidence"] - d["c0_mean"]).dropna(subset=["delta"])
+    return pd.DataFrame([{"condition": c, "claim_type": t, "truth_value": v, "n": len(g),
+                          "confidence_delta": g["delta"].mean()}
+                         for (c, t, v), g in d.groupby(["condition", "claim_type", "truth_value"])])
+
+
+def scope_table(df, scope) -> pd.DataFrame:
+    cols = ["condition", "n", "pct_0", "pct_1", "pct_2", "pct_NA", "share_2_of_mentions", "mean_score"]
+    if scope.empty:
+        return pd.DataFrame(columns=cols)
+    d = df[~df["interpreter"]].merge(scope, on="response_id")
+    out = []
+    for cond, g in d.groupby("condition"):
+        scored = pd.to_numeric(g["score"].where(g["score"] != "NA"), errors="coerce").dropna()
+        out.append({"condition": cond, "n": len(g), **{f"pct_{s}": float((g["score"] == s).mean()) for s in SCORE_COLORS},
+                    "share_2_of_mentions": float((scored == 2).mean()) if len(scored) else np.nan,
+                    "mean_score": float(scored.mean()) if len(scored) else np.nan})
+    return pd.DataFrame(out, columns=cols)
+
+
+def rep_variance_table(df) -> pd.DataFrame:
+    d = df.dropna(subset=["accepted"])
+    cells = d.groupby(["model", "claim_id", "condition", "interpreter"])["accepted"]
+    s = pd.DataFrame({"n_reps": cells.size(), "var": cells.var(ddof=0), "split": cells.nunique() > 1}).reset_index()
+    return s.groupby(["model", "condition", "interpreter"]).agg(
+        cells=("n_reps", "size"), mean_within_cell_variance=("var", "mean"),
+        share_cells_where_reps_disagree=("split", "mean")).reset_index()
+
+
+def model_scope_correct(df, scope, model) -> float:
+    if scope.empty:
+        return np.nan
+    d = df[(df["model"] == model) & ~df["interpreter"] & df["condition"].isin(MARKED)].merge(scope, on="response_id")
+    d = d[d["score"] != "NA"]
+    return float((d["score"] == "2").mean()) if len(d) else np.nan
+
+
+# ---------------------------------------------------------------- figures
+
+def _style(ax, title, ylabel):
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(MUTED)
+    ax.tick_params(colors=INK2, labelsize=9)
+    ax.grid(axis="y", color=GRID, linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.set_title(title, color=INK, fontsize=10, loc="left")
+    ax.set_ylabel(ylabel, color=INK2, fontsize=9)
+
+
+def _spread(values, gap):
+    """Nudge label y-positions apart (order kept) so end-of-line labels do not overlap."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    pos = list(values)
+    for a, b in zip(order, order[1:]):
+        if pos[b] - pos[a] < gap:
+            pos[b] = pos[a] + gap
+    return pos
+
+
+def figures(out: Path, acc: pd.DataFrame, disc: pd.DataFrame, scope_tab: pd.DataFrame, df: pd.DataFrame) -> list[Path]:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import PercentFormatter
+    paths, x = [], np.arange(len(CONDITIONS))
+
+    # 1. acceptance by condition. Hue = claim type; solid line and filled marker = true twin.
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), facecolor=SURFACE)
+    pooled = acc[acc["model"] == "pooled"]
+    ends = []
+    for ctype, color in (("real_obscure", BLUE), ("invented", ORANGE)):
+        for truth, ls, face in ((True, "-", color), (False, "--", SURFACE)):
+            s = pooled[(pooled["claim_type"] == ctype) & (pooled["truth_value"] == truth)]
+            s = s.set_index("condition").reindex(CONDITIONS)
+            ax.errorbar(x, s["acceptance"], yerr=[s["acceptance"] - s["ci_low"], s["ci_high"] - s["acceptance"]],
+                        color=color, ls=ls, lw=2, marker="o", ms=8, mfc=face, mec=color, mew=2, elinewidth=1, capsize=0)
+            last = s["acceptance"].dropna()
+            if len(last):
+                ends.append((float(last.iloc[-1]), CONDITIONS.index(last.index[-1]),
+                             f"{TYPE_LABEL[ctype]}, {'true' if truth else 'false'}"))
+    for (y, xe, label), yl in zip(ends, _spread([e[0] for e in ends], 0.065)):
+        ax.annotate(label, (xe, y), xytext=(xe + 0.3, yl), textcoords="data", va="center", fontsize=8, color=INK2)
+    ax.set_xticks(x, CONDITIONS)
+    ax.set_ylim(0, 1.08)
+    ax.set_xlim(-0.3, len(CONDITIONS) + 1.2)
+    _style(ax, "Figure 1. Acceptance by condition (pooled models; 95% CI over claims)", "share accepted")
+    ax.legend(handles=[Line2D([], [], color=BLUE, lw=2, label="real-obscure"),
+                       Line2D([], [], color=ORANGE, lw=2, label="invented"),
+                       Line2D([], [], color=INK2, lw=2, marker="o", ms=7, label="true twin"),
+                       Line2D([], [], color=INK2, lw=2, ls="--", marker="o", ms=7, mfc=SURFACE, label="false twin")],
+              frameon=False, fontsize=8, loc="upper left", ncol=2)
+    paths.append(_save(fig, out / "fig1_acceptance.png"))
+
+    # 2. discrimination index by condition
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), facecolor=SURFACE)
+    d = disc[disc["scope"] == "pooled"] if not disc.empty else disc
+    ends = []
+    for k, (ctype, color) in enumerate((("real_obscure", BLUE), ("invented", ORANGE))):
+        if d.empty:
+            break
+        s = d[d["claim_type"] == ctype].set_index("condition").reindex(CONDITIONS)
+        off = (k - 0.5) * 0.2
+        ax.errorbar(x + off, s["discrimination"],
+                    yerr=[s["discrimination"] - s["ci_low"], s["ci_high"] - s["discrimination"]],
+                    color=color, lw=0, elinewidth=1.5, marker="o", ms=8, mfc=color, mec=SURFACE, mew=1.5,
+                    label=TYPE_LABEL[ctype])
+        last = s["discrimination"].dropna()
+        if len(last):
+            ends.append((float(last.iloc[-1]), CONDITIONS.index(last.index[-1]), TYPE_LABEL[ctype]))
+    for (y, xe, label), yl in zip(ends, _spread([e[0] for e in ends], 0.07)):
+        ax.annotate(label, (xe + 0.1, y), xytext=(xe + 0.3, yl), textcoords="data", va="center", fontsize=8, color=INK2)
+    ax.axhline(0, color=MUTED, lw=0.8)
+    ax.set_xticks(x, CONDITIONS)
+    ax.set_xlim(-0.4, len(CONDITIONS) + 0.9)
+    _style(ax, "Figure 2. Discrimination index: true-twin minus false-twin acceptance (95% CI over pairs)",
+           "difference in share accepted")
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    paths.append(_save(fig, out / "fig2_discrimination.png"))
+
+    # 3. scope accuracy: 100% stacked bars per condition
+    fig, ax = plt.subplots(figsize=(7.5, 3.4), facecolor=SURFACE)
+    st = scope_tab.set_index("condition").reindex(list(MARKED)) if not scope_tab.empty else None
+    if st is not None and st["n"].notna().any():
+        y, left = np.arange(len(st)), np.zeros(len(st))
+        names = {"0": "0: support or misattribution", "1": "1: partial", "2": "2: correct scope",
+                 "NA": "credential not mentioned"}
+        for s in SCORE_COLORS:
+            vals = st[f"pct_{s}"].astype(float).fillna(0).values
+            ax.barh(y, vals, left=left, color=SCORE_COLORS[s], edgecolor=SURFACE, linewidth=2, label=names[s], height=0.6)
+            for yi, (l, v) in enumerate(zip(left, vals)):
+                if v >= 0.045:
+                    ax.text(l + v / 2, yi, f"{v:.0%}", ha="center", va="center", fontsize=8,
+                            color="#ffffff" if s in ("1", "2") else INK)
+            left += vals
+        ax.set_yticks(y, [f"{c} (n={int(n)})" if n == n else c for c, n in zip(st.index, st["n"])])
+        ax.invert_yaxis()
+        ax.set_xlim(0, 1)
+        ax.xaxis.set_major_formatter(PercentFormatter(1.0))
+        ax.legend(frameon=False, fontsize=8, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.1))
+    else:
+        ax.text(0.5, 0.5, "No scope scores yet", ha="center", va="center", color=INK2, transform=ax.transAxes)
+    _style(ax, "Figure 3. Scope accuracy of justifications by condition", "")
+    ax.grid(False)
+    paths.append(_save(fig, out / "fig3_scope_accuracy.png"))
+
+    # 4. countermeasure: per interpreter-arm model, C1 and C2 with and without the interpreter
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), facecolor=SURFACE)
+    im = sorted(df.loc[df["interpreter"], "model"].unique())
+    if im:
+        groups = [(m, c) for m in im for c in ("C1", "C2")]
+        xs = np.arange(len(groups))
+        for k, (interp, color, name) in enumerate(((False, BLUE, "no interpreter"), (True, ORANGE, "with interpreter"))):
+            vals = [df[(df["model"] == m) & (df["condition"] == c) & (df["interpreter"] == interp)]["accepted"].mean()
+                    for m, c in groups]
+            ax.bar(xs + (k - 0.5) * 0.38, vals, width=0.36, color=color, edgecolor=SURFACE, linewidth=2, label=name)
+        c0 = [df[(df["model"] == m) & (df["condition"] == "C0") & ~df["interpreter"]]["accepted"].mean() for m, _ in groups]
+        ax.scatter(xs, c0, marker="_", s=500, color=INK, linewidths=2, label="C0 (no credential)", zorder=3)
+        ax.set_xticks(xs, [f"{m}\n{c}" for m, c in groups], fontsize=8)
+        ax.set_ylim(0, 1.08)
+        ax.legend(frameon=False, fontsize=8, loc="upper left", ncol=3)
+    else:
+        ax.text(0.5, 0.5, "No interpreter-arm data yet", ha="center", va="center", color=INK2, transform=ax.transAxes)
+    _style(ax, "Figure 4. Countermeasure: acceptance with and without the scope interpreter", "share accepted")
+    paths.append(_save(fig, out / "fig4_interpreter.png"))
+    return paths
+
+
+def _save(fig, path: Path) -> Path:
+    import matplotlib.pyplot as plt
+    fig.tight_layout()
+    fig.savefig(path, dpi=200, facecolor=SURFACE)
+    plt.close(fig)
+    return path
+
+
+# ---------------------------------------------------------------- text
+
+def isnan(v) -> bool:
+    try:
+        return v is None or float(v) != float(v)
+    except (TypeError, ValueError):
+        return True
+
+
+def signed(v, scale=100.0, d=1) -> str:
+    """+29.8 / −3.3 (a true minus sign); fractions are shown as points by default."""
+    if isnan(v):
+        return "n/a"
+    x = round(float(v) * scale, d)
+    return ("+" if x > 0 else MINUS if x < 0 else "") + f"{abs(x):.{d}f}"
+
+
+def plain(v, scale=100.0, d=1) -> str:
+    if isnan(v):
+        return "n/a"
+    x = round(float(v) * scale, d)
+    return (MINUS if x < 0 else "") + f"{abs(x):.{d}f}"
+
+
+def pct(v, d=0) -> str:
+    return "n/a" if isnan(v) else f"{float(v) * 100:.{d}f}%"
+
+
+def num(v, d=3) -> str:
+    return "n/a" if isnan(v) else f"{float(v):.{d}f}"
+
+
+def p_is(name, p) -> str:
+    if isnan(p):
+        return f"{name} n/a"
+    return f"{name} < 0.001" if p < 0.001 else f"{name} = {p:.3f}"
+
+
+def fmt_p(p) -> str:
+    return "n/a" if isnan(p) else ("< 0.001" if p < 0.001 else f"{p:.3f}")
+
+
+SCALE = {"pp": 100.0, "conf": 1.0, "share": 100.0}
+UNIT = {"pp": " points", "conf": " confidence points", "share": ""}
+
+
+def value(r: dict, key="delta") -> str:
+    unit = r.get("unit", "pp")
+    return pct(r.get(key)) if unit == "share" else signed(r.get(key), SCALE[unit])
+
+
+def p_part(r, adjusted=True) -> str:
+    return p_is("p_holm", r.get("p_holm")) if adjusted else p_is("p", r.get("p")) + ", unadjusted"
+
+
+def inner(r, adjusted=True) -> str:
+    return f"95% CI {value(r, 'ci_low')} to {value(r, 'ci_high')}; {p_part(r, adjusted)}; {r['n_pairs']} pairs"
+
+
+def stat(r: dict, adjusted=True) -> str:
+    """+29.8 points (95% CI +22.7 to +37.1; p_holm = 0.016; 10 pairs)"""
+    if not r or not r.get("n_pairs"):
+        return "not available (no data for this comparison)"
+    return f"{value(r)}{UNIT[r.get('unit', 'pp')]} ({inner(r, adjusted)})"
+
+
+def by(r, adjusted=True, short=False) -> str:
+    """'by 29.8 points (95% CI 22.7 to 37.1; ...)': the size, with the direction carried by the verb."""
+    unit = r.get("unit", "pp")
+    sc = SCALE[unit]
+    lo, hi = (r["ci_low"], r["ci_high"]) if r["delta"] >= 0 else (-r["ci_high"], -r["ci_low"])
+    tail = f", {p_part(r, adjusted)}" if short else f"; {p_part(r, adjusted)}; {r['n_pairs']} pairs"
+    return f"by {plain(abs(r['delta']), sc)}{UNIT[unit]} (95% CI {plain(lo, sc)} to {plain(hi, sc)}{tail})"
+
+
+def unchanged(r, adjusted=True) -> str:
+    """(Δ = +2.0 points; 95% CI −3.0 to +7.0; p_holm = 0.512; 10 pairs)"""
+    return f"(Δ = {value(r)}{UNIT[r.get('unit', 'pp')]}; {inner(r, adjusted)})"
+
+
+def sig(r) -> bool:
+    return bool(r) and not isnan(r.get("p_holm")) and r["p_holm"] < ALPHA
+
+
+def find(rows, h, comparison, measure="acceptance", primary=True) -> dict:
+    for r in rows:
+        if (r["hypothesis"], r["comparison"], r["measure"], r["primary"]) == (h, comparison, measure, primary):
+            return r
+    return {}
+
+
+def ci_bound(r) -> str:
+    """The largest difference, in points, that the 95% CI leaves open."""
+    if not r or not r.get("n_pairs") or isnan(r.get("ci_low")):
+        return "n/a"
+    return f"{max(abs(r['ci_low']), abs(r['ci_high'])) * SCALE[r.get('unit', 'pp')]:.0f}"
+
+
+def build_slots(ctx: dict) -> dict:
+    """Ready-to-paste text for each slot. Verbs follow the data: a change is reported as a change only
+    when p_holm < .05 (p < .05 for the exploratory H5); otherwise the text says what the CI leaves open."""
+    real, allp = ctx["fam"][("pooled", "real_obscure")], ctx["fam"][("pooled", "all")]
+    h1, h1f = find(real, "H1", "C1 vs C0"), ctx["h1_false"]
+    c32, c32c = find(real, "H2", "C3 vs C2"), find(real, "H2", "C3 vs C2", "confidence")
+    c41, c43 = find(real, "H2", "C4 vs C1"), find(real, "H2", "C4 vs C3")
+    d50 = find(real, "H2b", "C5 vs C0", "discrimination index")
+    dflat = find(real, "H2b", "C1-C4 mean vs C0", "discrimination index", primary=False)
+    h3 = find(real, "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    h4 = find(allp, "H4", "interpreter vs none (C1, C2)")
+    h5r, disc = ctx["h5"], ctx["disc_real"]
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+    s = {"N_MODELS": words.get(len(ctx["models"]), str(len(ctx["models"])))}
+    s["N_STUDY_MODELS"] = s["N_MODELS"]
+    h1_up = sig(h1) and h1["delta"] > 0
+
+    # H1 (abstract headline and 4.2)
+    if h1.get("n_pairs"):
+        false_note = (f"; false versions alone: {plain(abs(h1f['delta']))} points"
+                      if h1f.get("n_pairs") and sig(h1) and np.sign(h1f["delta"]) == np.sign(h1["delta"]) else "")
+        if sig(h1):
+            b = by(h1, short=True)
+            h1_core = f"{'raised' if h1['delta'] > 0 else 'lowered'} acceptance {b[:-1]}{false_note})"
+        else:
+            h1_core = f"did not reliably change acceptance {unchanged(h1)}"
+        lead = f"On claims about real organisations, a credential that certified nothing about the claim {h1_core}"
+    else:
+        lead = "C1 vs C0 was not available"
+    s["H1_STAT"] = (f"{signed(h1f.get('delta'))} points on real-obscure false claims (95% CI {signed(h1f.get('ci_low'))} "
+                    f"to {signed(h1f.get('ci_high'))}; {p_is('p', h1f.get('p'))}, unadjusted; {h1f.get('n_pairs', 0)} "
+                    f"pairs). Pre-registered test, both twins: {stat(h1)}")
+
+    # H2 (4.3 and the abstract)
+    s["C32_STAT"] = f"C3 − C2 = {stat(c32)}; confidence, C3 − C2 = {stat(c32c)}"
+    s["C41_STAT"] = f"C4 − C1 = {stat(c41)}. C4 vs C3: C4 − C3 = {stat(c43)}"
+    names = ((c32, "moving the statement from gathered to created assertions (C3 vs C2)"),
+             (c41, "removing the signer from the trust list (C4 vs C1)"), (c43, "C4 vs C3"))
+    moved = [(r, n) for r, n in names if sig(r)]
+    if not any(r.get("n_pairs") for r, _ in names):
+        s["H2_SENTENCE"] = "C2–C4 comparisons were not available."
+    elif not moved:
+        s["H2_SENTENCE"] = ("No reliable difference: acceptance did not reliably differ whether the signer asserted the "
+                            f"statement (C3) or merely recorded it (C2), with the 95% CI excluding differences larger "
+                            f"than {ci_bound(c32)} points, nor whether the signer was on a trust list (C4 vs C1; larger "
+                            f"than {ci_bound(c41)} points).")
+    else:
+        s["H2_SENTENCE"] = ("Partly: " + "; ".join(f"{n} {'raised' if r['delta'] > 0 else 'lowered'} acceptance {by(r)}"
+                                                   for r, n in moved)
+                            + ("; the other contrasts did not reliably differ." if len(moved) < 3 else "."))
+    if c32.get("n_pairs"):
+        c32_phrase = (f"acceptance did not reliably differ between a signer who asserted the statement and one who "
+                      f"merely recorded it (C3 − C2 = {value(c32)} points, 95% CI {value(c32, 'ci_low')} to "
+                      f"{value(c32, 'ci_high')})" if not sig(c32) else
+                      f"acceptance was {'higher' if c32['delta'] > 0 else 'lower'} {by(c32, short=True)} when the "
+                      f"signer asserted the statement than when it merely recorded it")
+        s["HEADLINE"] = f"{lead}, and {c32_phrase}."
+    else:
+        s["HEADLINE"] = lead + "."
+
+    # H2b (4.4 and the abstract)
+    flat = bool(dflat.get("n_pairs")) and not (dflat.get("p", 1.0) < ALPHA)
+    rose = sig(d50) and d50["delta"] > 0
+    if d50.get("n_pairs"):
+        c5 = (f"rose {by(d50)}" if rose else f"{'fell' if sig(d50) else 'did not reliably rise'} "
+              f"{by(d50) if sig(d50) else unchanged(d50)}")
+        s["DISCRIMINATION"] = (
+            f"On real-obscure pairs the discrimination index was {signed(disc.get('C0'))} points at C0. Averaged over "
+            f"C1–C4 it {'did not reliably move' if flat else 'moved'} (Δ = {value(dflat)} points vs C0; "
+            f"{inner(dflat, adjusted=False)}), and at C5 it {c5}.")
+        if h1_up and flat:
+            s["DISC_ABSTRACT"] = ("These credentials raised acceptance of true and false versions alike, leaving the "
+                                  "ability to tell them apart unchanged; " +
+                                  ("only a credential binding the claim to a checkable source improved it." if rose else
+                                   "even a credential binding the claim to a checkable source did not reliably "
+                                   "improve it."))
+        else:
+            s["DISC_ABSTRACT"] = s["DISCRIMINATION"]
+    else:
+        s["DISCRIMINATION"] = s["DISC_ABSTRACT"] = "The discrimination index was not available."
+    s["RESULT_PHRASE"] = ("that credentials certifying nothing about a claim raised belief in its true and false "
+                          "versions alike without improving accuracy" if (h1_up and flat) else
+                          "how far credentials moved belief and accuracy separately (Section 4.4)")
+
+    # H3 (4.5)
+    if h3.get("n_pairs"):
+        verdict = ("fewer than half" if sig(h3) and h3["delta"] < 0.5 else
+                   "more than half" if sig(h3) else "not reliably different from half")
+        s["H3_SENTENCE"] = (f"Of the justifications that mentioned the credential, {value(h3)} described its scope "
+                            f"correctly (score 2; 95% CI {value(h3, 'ci_low')} to {value(h3, 'ci_high')} over "
+                            f"{h3['n_pairs']} real-obscure pairs): {verdict} (tested against 50%, "
+                            f"{p_is('p_holm', h3.get('p_holm'))}).")
+    else:
+        s["H3_SENTENCE"] = "Scope scores were not available."
+    s["SCOPE_TABLE"] = s["H3_SENTENCE"] + "\n\n" + ctx["scope_md"]
+    s["CITATION_TABLE"] = ctx["citation_md"]
+
+    # H4 (abstract and 4.7)
+    if h4.get("n_pairs"):
+        gap = h4.get("gap_without_interpreter", np.nan)
+        reduced = sig(h4) and h4["delta"] < 0
+        closed = ""
+        if reduced and not isnan(gap) and gap > 0.02:
+            closed = f", closing {min(100.0, -h4['delta'] / gap * 100):.0f}% of the rise over the no-credential baseline"
+        if sig(h4):
+            core = f"{'reduced' if reduced else 'increased'} acceptance under C1 and C2 {by(h4)}{closed}"
+        else:
+            core = f"did not reliably change acceptance under C1 and C2 {unchanged(h4)}"
+        s["H4_SENTENCE"] = f"A plain-language interpreter stating each credential's scope {core}."
+        s["H4_STAT"] = (f"interpreter − none = {stat(h4)}, across the three interpreter-arm models; without the "
+                        f"interpreter, their C1/C2 acceptance was {signed(gap)} points relative to C0")
+    else:
+        s["H4_SENTENCE"] = s["H4_STAT"] = "The interpreter arm was not available."
+
+    # H5 (exploratory: abstract and 4.6)
+    if h5r:
+        d, pi = h5r["invented_delta"], h5r["invented_p"]
+        moved5 = not isnan(pi) and pi < ALPHA
+        change = (f"{'raised' if d > 0 else 'lowered'} acceptance by {plain(abs(d))} points" if moved5
+                  else f"changed acceptance by {signed(d)} points")
+        compare = (f"against {signed(h5r['real_delta'])} points for claims about real organisations (difference "
+                   f"{signed(h5r['difference'])} points; 95% CI {signed(h5r['ci_low'])} to {signed(h5r['ci_high'])}; "
+                   f"{p_is('p', h5r['p'])}, exploratory)")
+        s["H5_DELTA"] = (f"{signed(d)} points (95% CI {signed(h5r['invented_ci_low'])} to "
+                         f"{signed(h5r['invented_ci_high'])}; {p_is('p', pi)}, unadjusted, exploratory; "
+                         f"{h5r['n_invented']} pairs)")
+        s["H5_ABSTRACT"] = f"For organisations the models did not recognise, the same credential {change}, {compare}."
+        more = h5r["difference"] > 0 and h5r["p"] < ALPHA
+        answer = "Yes" if (moved5 and d > 0 and more) else "Partly" if (moved5 and d > 0) else "No clear evidence"
+        s["H5_46"] = (f"{answer}: on claims about organisations the models did not recognise, the credential {change}, "
+                      f"{compare}.")
+    else:
+        s["H5_DELTA"] = s["H5_ABSTRACT"] = s["H5_46"] = "H5 was not available."
+
+    # 4.1 baseline
+    base = ctx["c0"]
+    for key in ("real_true", "real_false", "inv_true", "inv_false"):
+        v = base.get(key)
+        s[f"C0_{key}"] = "n/a" if not v else f"{pct(v[0])} (95% CI {pct(v[1])}–{pct(v[2])})"
+    if all(base.get(k) for k in ("real_true", "real_false", "inv_true", "inv_false")):
+        real_mean = (base["real_true"][0] + base["real_false"][0]) / 2
+        inv_mean = (base["inv_true"][0] + base["inv_false"][0]) / 2
+        gap = real_mean - inv_mean
+        how = "much less often than" if gap > 0.10 else "more often than" if gap < -0.10 else "about as often as"
+        s["C0_SENTENCE"] = (f"At baseline, claims about invented organisations were accepted {how} claims about real "
+                            f"ones ({pct(inv_mean)} vs {pct(real_mean)})" +
+                            (", consistent with non-recognition being read as evidence of fabrication." if gap > 0.10
+                             else "."))
+    else:
+        s["C0_SENTENCE"] = "C0 data were not available."
+
+    for k in ("SETTINGS", "MODELS_PARAGRAPH", "JUDGE_MODEL", "N_JUDGED", "KAPPA"):
+        s[k] = ctx[k.lower()]
+    return s
+
+
+# (pattern for the placeholder's own text, pattern the text just before it must end with, slot)
+SLOT_RULES = [
+    (r"PLACEHOLDER$", None, "_INSTRUCTION"),
+    (r"N_MODELS$", None, "N_MODELS"),
+    (r"HEADLINE RESULT\b", None, "HEADLINE"),
+    (r"DISCRIMINATION RESULT\b", None, "DISC_ABSTRACT"),
+    (r"INTERPRETER RESULT\b", None, "H4_SENTENCE"),
+    (r"UNRECOGNISED-SOURCE RESULT\b", None, "H5_ABSTRACT"),
+    (r"RESULT$", r"showing $", "RESULT_PHRASE"),
+    (r"FILL FROM MODELS\.YAML\b", None, "MODELS_PARAGRAPH"),
+    (r"SETTINGS$", None, "SETTINGS"),
+    (r"JUDGE MODEL$", None, "JUDGE_MODEL"),
+    (r"N$", r"sample of $", "N_JUDGED"),
+    (r"N$", r"evaluations of $", "N_STUDY_MODELS"),
+    (r"KAPPA$", None, "KAPPA"),
+    (r"X$", r"real-obscure true $", "C0_real_true"),
+    (r"X$", r"real-obscure true \{X\}, false $", "C0_real_false"),
+    (r"X$", r"invented true $", "C0_inv_true"),
+    (r"X$", r"invented true \{X\}, false $", "C0_inv_false"),
+    (r"ONE SENTENCE ON WHETHER INVENTED\b", None, "C0_SENTENCE"),
+    (r"Δ, CI, P_HOLM$", r"C1 vs C0 on false claims: $", "H1_STAT"),
+    (r"Δ, CI, P_HOLM$", r"C2 vs C3: $", "C32_STAT"),
+    (r"Δ, CI, P_HOLM$", r"C4 vs C1: $", "C41_STAT"),
+    (r"Δ, CI, P_HOLM$", r"C1/C2: $", "H4_STAT"),
+    (r"ONE SENTENCE: DID MODELS DISTINGUISH\b", None, "H2_SENTENCE"),
+    (r"DID THE INDEX STAY FLAT\b", None, "DISCRIMINATION"),
+    (r"TABLE$", r"Scope accuracy by condition $", "SCOPE_TABLE"),
+    (r"TABLE$", r"Credential-citation rate $", "CITATION_TABLE"),
+    (r"Δ$", r"invented items: $", "H5_DELTA"),
+    (r"DID A CREDENTIAL RESCUE\b", None, "H5_46"),
+]
+
+
+def _flat(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*>\s?", "", text))
+
+
+def placeholder_entries(draft_text: str, slots: dict) -> list[dict]:
+    """Every {...} in the draft, in order: where it is, which slot it maps to, and the text."""
+    entries, section, heading = [], {}, ""
+    for i, line in enumerate(draft_text.splitlines()):
+        if line.startswith("#"):
+            heading = line.lstrip("# ").strip()
+        section[i] = heading
+    for m in re.finditer(r"\{[^{}]*\}", draft_text):
+        inner = _flat(m.group(0)[1:-1]).strip()
+        before = _flat(draft_text[max(0, m.start() - 300):m.start()])
+        slot = next((name for own, ctx_pat, name in SLOT_RULES
+                     if re.match(own, inner.upper()) and (ctx_pat is None or re.search(ctx_pat, before))), None)
+        line_no = draft_text.count("\n", 0, m.start())
+        text = ("(instruction text, not a slot to fill)" if slot == "_INSTRUCTION"
+                else slots.get(slot, NO_VALUE) if slot else NO_VALUE)
+        entries.append({"placeholder": "{" + inner + "}", "start": m.start(), "end": m.end(), "line": line_no + 1,
+                        "section": section.get(line_no, ""), "slot": slot, "text": text})
+    return entries
+
+
+STALE_MODEL_SENTENCE = re.compile(r":\s*GPT-OSS-120B.*?spot check \(10 claims × C0/C1 ×\s*3\)\.", re.S)
+
+
+def filled_draft(draft_text: str, entries) -> str:
+    out, pos = [], 0
+    for e in entries:
+        if e["slot"] in (None, "_INSTRUCTION"):
+            continue
+        out.append(draft_text[pos:e["start"]])
+        text, end = e["text"], e["end"]
+        if e["slot"] == "MODELS_PARAGRAPH":  # replace the stale model sentence that follows the slot too
+            m = STALE_MODEL_SENTENCE.match(draft_text, end)
+            if m:
+                end = m.end()
+        if "\n|" in text:  # a table needs its own block
+            text = "\n\n" + text + "\n\n"
+        out.append(text)
+        pos = end
+    out.append(draft_text[pos:])
+    return "".join(out)
+
+
+def table_md(df: pd.DataFrame, cols, headers, fmt=None) -> str:
+    if df is None or df.empty:
+        return "_Not available yet._"
+    fmt = fmt or {}
+    out = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
+    for _, r in df.iterrows():
+        out.append("| " + " | ".join(fmt[c](r[c]) if c in fmt else str(r[c]) for c in cols) + " |")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------- driver
+
+def git_out(*args) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        return ""
+
+
+def reasoning_settings(raw_dir: Path, models, cfg) -> tuple[str, list[str]]:
+    """The reasoning setting each model actually logged, and any model that logged more than one."""
+    groups, problems = {}, []
+    for m in models:
+        logged = {json.dumps(r["reasoning_setting"], sort_keys=True) for r in R.read_raw(Path(raw_dir) / f"{m}.jsonl")
+                  if r.get("status") in R.DONE_STATUSES and "reasoning_setting" in r}
+        if len(logged) > 1:
+            problems.append(f"{m} logged {len(logged)} different reasoning settings: {sorted(logged)}")
+        mc = cfg["models"][m]
+        setting = json.loads(sorted(logged)[0]) if logged else (
+            mc.get("reasoning") or {"thinkingConfig": (mc.get("generation_config") or {}).get("thinkingConfig")})
+        flat = (setting or {}).get("thinkingConfig") or setting or {}
+        shown = ", ".join(f"{k}: {v}" for k, v in flat.items() if k in ("reasoning_effort", "thinkingLevel"))
+        key = f"`{shown or json.dumps(setting)}`" + ("" if logged else " (from models.yaml: not in the logs)")
+        groups.setdefault(key, []).append(m)
+    parts = [" and ".join(ms) + " " + k + (", the lowest gpt-oss allows" if "reasoning_effort: low" in k else "")
+             for k, ms in groups.items()]
+    return "; ".join(parts) + "; logged with every call", problems
+
+
+def kappa_text(graded_dir: Path) -> str:
+    ag = Path(graded_dir) / "agreement_30.json"
+    if not ag.exists():
+        others = sorted(Path(graded_dir).glob("agreement_*.json"))
+        if not others:
+            return "not computed yet (run grade.py --import-human on the 30 hand-labels)"
+        ag = others[0]
+    a = json.loads(ag.read_text(encoding="utf-8"))
+    o = a.get("overall", {})
+    if not o.get("n_items"):
+        return "not computed: no judge scores for the hand-labelled items"
+    fams = ", ".join(f"{k} {num(v.get('weighted_kappa_linear'), 2)} (n = {v.get('n_items')})"
+                     for k, v in a.get("by_family", {}).items())
+    return (f"linear-weighted κ = {num(o.get('weighted_kappa_linear'), 2)} on the {o.get('n_both_scored')} items both "
+            f"raters scored 0–2; exact agreement {pct(o.get('exact_agreement'))} over {o['n_items']} items; by model "
+            f"family: {fams}")
+
+
+def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: Path, config: Path,
+            scope_req: str = "auto") -> dict:
+    cfg = R.load_config(config)
+    df = load_responses(raw_dir, list(cfg["models"]))
+    if df.empty:
+        raise SystemExit(f"No responses in {raw_dir}. Run the study (or src/synthetic.py for a rehearsal) first.")
+    models = [m for m in cfg["models"] if m in set(df["model"])]
+    out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(SEED)
+    source = scope_source(graded_dir, pilot_dir, scope_req)
+    scope = load_scope(graded_dir, source)
+
+    fam, all_rows = {}, []
+    for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
+        for ctype, types in TYPE_SETS.items():
+            rows = primary_family(df, scope, ms, types, rng)
+            for r in rows:
+                r.update(model_scope=scope_name, claim_type=ctype)
+            fam[(scope_name, ctype)] = rows
+            all_rows += rows
+    lead = ["model_scope", "claim_type", "hypothesis", "comparison", "measure", "unit", "sample", "primary",
+            "n_pairs", "delta", "ci_low", "ci_high", "p", "p_holm", "p_perm", "p_perm_holm", "p_perm_min", "sd",
+            "n_ceiling_dropped"]
+    tests = pd.DataFrame(all_rows)
+    tests = tests[lead + [c for c in tests.columns if c not in lead]]
+    tests.to_csv(out / "primary_tests.csv", index=False)
+
+    wf = subset(pair_values(df, models, False, False), ("real_obscure",), ceiling_pairs(df, models))
+    h1_false = paired(col(wf, "C0"), col(wf, "C1"), rng)
+    h5r = h5(df, models, rng)
+    pd.DataFrame([h5r] if h5r else []).to_csv(out / "h5_unrecognised_sources.csv", index=False)
+
+    acc = acceptance_table(df)
+    acc.to_csv(out / "acceptance_by_condition.csv", index=False)
+    disc = discrimination_table(df, models)
+    disc.to_csv(out / "discrimination_by_condition.csv", index=False)
+    rates = rates_table(df)
+    rates.to_csv(out / "citation_abstention_confidence.csv", index=False)
+    confidence_delta_table(df).to_csv(out / "confidence_delta.csv", index=False)
+    stab = scope_table(df, scope)
+    stab.to_csv(out / "scope_accuracy.csv", index=False)
+    rep_variance_table(df).to_csv(out / "rep_variance.csv", index=False)
+
+    pf_path = Path(graded_dir) / "parse_failures.csv"
+    pf = {r["model"]: r for r in G.read_csv(pf_path)} if pf_path.exists() else {}
+    per_model = []
+    for m in models:
+        r, a = fam[(m, "real_obscure")], fam[(m, "all")]
+        per_model.append({
+            "model": m, "cells": int((df["model"] == m).sum()),
+            "c0_acceptance": df[(df["model"] == m) & (df["condition"] == "C0") & ~df["interpreter"]]["accepted"].mean(),
+            "h1_c1_vs_c0_real": find(r, "H1", "C1 vs C0").get("delta", np.nan),
+            "h2_c3_vs_c2_real": find(r, "H2", "C3 vs C2").get("delta", np.nan),
+            "h2_c4_vs_c1_real": find(r, "H2", "C4 vs C1").get("delta", np.nan),
+            "h2b_disc_c5_vs_c0_real": find(r, "H2b", "C5 vs C0", "discrimination index").get("delta", np.nan),
+            "h4_interpreter_all": find(a, "H4", "interpreter vs none (C1, C2)").get("delta", np.nan),
+            "scope_correct_share": model_scope_correct(df, scope, m),
+            "parse_failed_rate": pf.get(m, {}).get("parse_failed_rate", ""),
+            "cost_usd": pf.get(m, {}).get("cost_usd", "")})
+    per_model_df = pd.DataFrame(per_model)
+    per_model_df.to_csv(out / "per_model.csv", index=False)
+    fig_paths = figures(out, acc, disc, stab, df)
+
+    pooled_acc = acc[acc["model"] == "pooled"]
+    c0 = {}
+    for key, (ct, tv) in {"real_true": ("real_obscure", True), "real_false": ("real_obscure", False),
+                          "inv_true": ("invented", True), "inv_false": ("invented", False)}.items():
+        r = pooled_acc[(pooled_acc["claim_type"] == ct) & (pooled_acc["truth_value"] == tv)
+                       & (pooled_acc["condition"] == "C0")]
+        if len(r):
+            c0[key] = (float(r["acceptance"].iloc[0]), float(r["ci_low"].iloc[0]), float(r["ci_high"].iloc[0]))
+    dreal = (disc[(disc["scope"] == "pooled") & (disc["claim_type"] == "real_obscure")]
+             .set_index("condition")["discrimination"].to_dict()) if not disc.empty else {}
+    settings_text, setting_problems = reasoning_settings(raw_dir, models, cfg)
+    counts = df.groupby("model").size().to_dict()
+    pf_text = ", ".join(f"{m} {float(pf[m]['parse_failed_rate']):.1%}" for m in models
+                        if m in pf and pf[m].get("parse_failed_rate") not in ("", None)) or "see parse_failures.csv"
+    models_paragraph = (
+        "GPT-OSS-120B, GPT-OSS-20B and Qwen3.8-27B via Groq, each at full design (40 claims × 6 conditions × "
+        "3 repetitions = 720 calls) plus the interpreter arm (C1 and C2 with the interpreter: 240 calls); Gemini 3.5 "
+        "Flash-Lite via Google AI Studio at full design (720 calls); 3,600 calls in all. Completed cells: "
+        + ", ".join(f"{m} {n}" for m, n in counts.items()) + f". Parse failures: {pf_text}.")
+    jid = cfg.get("judge", {}).get("model_id", "the judge")
+    judge_model = {"judge": f"`{jid}` (Gemma 4 31B via the Gemini API, temperature 0, blind to model, condition and truth)",
+                   "human": "the author's blind hand-labels (the judge failed the pilot check, so the §5 fallback applies)",
+                   "none": "[no scope scores yet]"}[source]
+    n_scored = int(len(df.merge(scope, on="response_id"))) if not scope.empty else 0
+    scope_md = table_md(stab, ["condition", "n", "pct_0", "pct_1", "pct_2", "pct_NA", "share_2_of_mentions", "mean_score"],
+                        ["Condition", "n", "0", "1", "2", "not mentioned", "2 among mentions", "mean (0–2)"],
+                        {**{k: pct for k in ("pct_0", "pct_1", "pct_2", "pct_NA", "share_2_of_mentions")},
+                         "mean_score": lambda v: num(v, 2)})
+    citation_md = table_md(rates[rates["scope"] == "pooled"] if not rates.empty else rates,
+                           ["condition", "n", "credential_citation_rate", "abstention_rate", "mean_confidence"],
+                           ["Condition", "n", "credential-citation rate", "abstention rate", "mean confidence"],
+                           {"credential_citation_rate": pct, "abstention_rate": pct, "mean_confidence": lambda v: num(v, 0)})
+    ctx = {"fam": fam, "h1_false": h1_false, "h5": h5r, "disc_real": dreal, "models": models, "c0": c0,
+           "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_model,
+           "n_judged": str(n_scored), "kappa": kappa_text(graded_dir), "scope_md": scope_md, "citation_md": citation_md}
+    slots = build_slots(ctx)
+    draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
+    entries = placeholder_entries(draft_text, slots)
+    synthetic = bool(df["synthetic"].any())
+    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems)
+    (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
+    if draft_text:
+        banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
+                  + (" from SYNTHETIC DATA: NOT RESULTS" if synthetic else "")
+                  + ". Check every sentence against results_summary.md before pasting. -->\n\n")
+        (out / "REPORT_DRAFT.filled.md").write_text(banner + filled_draft(draft_text, entries), encoding="utf-8",
+                                                     newline="\n")
+    return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "fam": fam,
+            "source": source, "figures": fig_paths, "problems": setting_problems}
+
+
+def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems) -> str:
+    prereg = git_out("log", "-1", "--format=%h", "--", "PREREGISTRATION.md") or "<hash>"
+    lines = ["# Results summary", ""]
+    if synthetic:
+        lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
+    lines += [f"Generated {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC by `src/analyse.py` at commit "
+              f"`{R.git_commit()}` from `{raw_dir}`: {len(df)} completed cells; models "
+              f"{', '.join(sorted(df['model'].unique()))}. Scope-accuracy source: **{source}**.", ""]
+    for p in problems:
+        lines += [f"> **PROTOCOL CHECK FAILED:** {p}. Reasoning must be fixed per model (CLAUDE.md); record this "
+                  "in DEVIATIONS.md.", ""]
+    lines += ["Headline numbers: real-obscure pairs for H1–H3 and H2b (pre-registration rev 3), all pairs for H4, "
+              "invented minus real-obscure for H5 (exploratory). Differences are in percentage points unless marked; "
+              "p_holm is Holm-adjusted over the eight primary tests. The operational choices are listed at the top of "
+              "`src/analyse.py`. Check every sentence against the tables below before pasting it.", "",
+              "## Paste into REPORT_DRAFT.md", "",
+              "`REPORT_DRAFT.filled.md` in this folder is the draft with these substituted, for checking.", ""]
+    for k, e in enumerate(entries, 1):
+        ph = e["placeholder"] if len(e["placeholder"]) <= 90 else e["placeholder"][:88] + "…}"
+        lines += [f"### {k}. `{ph}`", "", f"Line {e['line']} ({e['section'] or 'top'})", "", e["text"], ""]
+    lines += ["## Other text in REPORT_DRAFT.md to update", "",
+              f"- §3: the pre-registration is rev 3.2, commit `{prereg}` (the draft says rev 3.1, `62535a8`).",
+              "- §3.3: the slot text replaces the placeholder *and* the stale sentence after it, which still lists "
+              "Gemini 3.1 Flash-Lite and the Gemini 3.6 Flash spot check (both dropped in rev 3.2).",
+              "- §4.2: the slot reports real-obscure false claims plus the pre-registered both-twin test; invented "
+              "items are in §4.6.",
+              "- §4.8: delete \"3.1 vs 3.5 Flash-Lite. Spot check.\"; the 120B vs 20B comparison is below.",
+              "- Appendix A, first limitation: frontier models were not tested (the spot check was dropped).",
+              "- §3 cites `DEVIATIONS.md`: list any deviations there, or state that there were none.",
+              "- The draft's instruction line names `data/results_summary.md`; the file is "
+              "`data/results/results_summary.md`."]
+    if source == "human":
+        lines += ["- §3.4: scope accuracy comes from the author's 150 hand-labels, not the judge; reword the sentence "
+                  "\"judged by … with judge–human agreement …\" to match."]
+    lines += [""]
+    flags = []
+    for key, hyps in ((("pooled", "real_obscure"), ("H1", "H2", "H2b", "H3")), (("pooled", "all"), ("H4",))):
+        for r in fam[key]:
+            if r["primary"] and r["hypothesis"] in hyps and not isnan(r["p_holm"]) and not isnan(r["p_perm_holm"]) \
+                    and (r["p_holm"] < ALPHA) != (r["p_perm_holm"] < ALPHA):
+                flags.append(f"{r['hypothesis']} {r['comparison']} ({r['measure']}, {TYPE_LABEL[key[1]]}): t-test "
+                             f"{p_is('p_holm', r['p_holm'])}, permutation {p_is('p_holm', r['p_perm_holm'])}")
+    lines += ["## Robustness: t-test vs permutation test", ""]
+    lines += (["The two tests disagree about significance for these headline tests. Report the t-test (the "
+               "pre-specified primary) and give the permutation result alongside:", ""] + [f"- {f}" for f in flags]
+              if flags else ["The sign-flip permutation test agrees with the t-test about significance on every "
+                             "headline test."])
+    lines += [""]
+    for label, key in (("pooled models, real-obscure pairs (headline)", ("pooled", "real_obscure")),
+                       ("pooled models, invented pairs", ("pooled", "invented")),
+                       ("pooled models, all pairs", ("pooled", "all"))):
+        rows = pd.DataFrame(fam[key])
+        rows["Δ"] = [value(r) for r in fam[key]]
+        rows["95% CI"] = [f"{value(r, 'ci_low')} to {value(r, 'ci_high')}" for r in fam[key]]
+        lines += [f"## Tests: {label}", "",
+                  table_md(rows, ["hypothesis", "comparison", "measure", "sample", "primary", "n_pairs", "Δ", "95% CI",
+                                  "p", "p_holm", "p_perm_holm"],
+                           ["H", "comparison", "measure", "sample", "primary", "pairs", "Δ", "95% CI", "p", "p_holm",
+                            "p_holm (permutation)"],
+                           {"p": fmt_p, "p_holm": fmt_p, "p_perm_holm": fmt_p}), ""]
+    lines += ["Acceptance and discrimination-index differences are in percentage points; confidence in points on the "
+              "0–100 scale; H3 is a share. Tests are paired t-tests over pairs. The permutation column is the "
+              "robustness check: with n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach "
+              "p_holm < 0.05 over eight tests. `primary_tests.csv` has every model and claim type.", ""]
+    shown = pd.DataFrame({
+        "Model": per_model_df["model"], "cells": per_model_df["cells"],
+        "C0 acceptance": per_model_df["c0_acceptance"].map(pct),
+        "H1 C1−C0": per_model_df["h1_c1_vs_c0_real"].map(signed),
+        "H2 C3−C2": per_model_df["h2_c3_vs_c2_real"].map(signed),
+        "H2 C4−C1": per_model_df["h2_c4_vs_c1_real"].map(signed),
+        "H2b index C5−C0": per_model_df["h2b_disc_c5_vs_c0_real"].map(signed),
+        "H4 interpreter−none": per_model_df["h4_interpreter_all"].map(signed),
+        "scope: share scored 2": per_model_df["scope_correct_share"].map(pct),
+        "parse failures": per_model_df["parse_failed_rate"].map(lambda v: pct(v, 1)),
+        "cost USD": per_model_df["cost_usd"].map(lambda v: num(v, 2))})
+    lines += ["## Per model", "",
+              "Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs.", "",
+              table_md(shown, list(shown.columns), list(shown.columns)), ""]
+    pm = per_model_df.set_index("model")
+    if {"gpt-oss-120b", "gpt-oss-20b"} <= set(pm.index):
+        lines += [f"**Scale within family (§6).** Share of credential mentions scored 2: "
+                  f"{pct(pm.loc['gpt-oss-120b', 'scope_correct_share'])} for gpt-oss-120b vs "
+                  f"{pct(pm.loc['gpt-oss-20b', 'scope_correct_share'])} for gpt-oss-20b. C1 − C0 on real-obscure pairs: "
+                  f"{signed(pm.loc['gpt-oss-120b', 'h1_c1_vs_c0_real'])} vs "
+                  f"{signed(pm.loc['gpt-oss-20b', 'h1_c1_vs_c0_real'])} points.", ""]
+    lines += ["## Files", "", "| File | Contents |", "|---|---|",
+              "| `fig1_acceptance.png` | Figure 1 (§4.2): acceptance by condition, claim type and truth |",
+              "| `fig2_discrimination.png` | Figure 2 (§4.4): discrimination index by condition |",
+              "| `fig3_scope_accuracy.png` | Scope scores by condition (§4.5) |",
+              "| `fig4_interpreter.png` | Interpreter arm (§4.7) |",
+              "| `primary_tests.csv` | Every primary test per model scope and claim type, with Holm |",
+              "| `acceptance_by_condition.csv` | Acceptance per model, claim type, truth and condition, plus pooled |",
+              "| `discrimination_by_condition.csv` | Discrimination index, with floor and ceiling pair counts |",
+              "| `citation_abstention_confidence.csv` | Credential-citation rate, abstention rate, mean confidence |",
+              "| `confidence_delta.csv` | Confidence minus the same item's C0 mean |",
+              "| `scope_accuracy.csv` | Scope score distribution per condition |",
+              "| `h5_unrecognised_sources.csv` | H5 (exploratory) |",
+              "| `rep_variance.csv` | Repetition variance (§7) |",
+              "| `per_model.csv` | Per-model summary (§4.8) |",
+              "| `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |"]
+    return "\n".join(lines) + "\n"
+
+
+def main(argv=None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--config", type=Path, default=REPO / "models.yaml")
+    ap.add_argument("--raw-dir", type=Path, default=DATA / "raw")
+    ap.add_argument("--graded-dir", type=Path, default=DATA / "graded")
+    ap.add_argument("--pilot-dir", type=Path, default=DATA / "pilot")
+    ap.add_argument("--out", type=Path, default=DATA / "results")
+    ap.add_argument("--draft", type=Path, default=REPO / "REPORT_DRAFT.md")
+    ap.add_argument("--scope-source", choices=("auto", "judge", "human", "none"), default="auto")
+    a = ap.parse_args(argv)
+    res = analyse(a.raw_dir, a.graded_dir, a.out, a.pilot_dir, a.draft, a.config, a.scope_source)
+    slots = [e for e in res["entries"] if e["slot"] != "_INSTRUCTION"]
+    missing = [e for e in slots if e["text"] == NO_VALUE]
+    print(f"results -> {a.out}")
+    print(f"  scope-accuracy source: {res['source']}; {len(slots)} draft slots filled automatically, "
+          f"{len(missing)} need a hand fill")
+    for e in missing:
+        print(f"  by hand: {e['placeholder'][:70]} (line {e['line']})")
+    for p in res["problems"]:
+        print(f"  PROTOCOL CHECK FAILED: {p}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

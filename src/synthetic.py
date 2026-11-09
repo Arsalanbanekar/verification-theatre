@@ -2,6 +2,7 @@
 before real data exists (CLAUDE.md: write the analysis against fake data first).
 
   python src/synthetic.py --out data/synthetic/raw --scenario effect   (or null)
+  python src/synthetic.py --graded-dir data/synthetic/graded           (also grade it, with fake judge scores)
 
 Every line carries "synthetic": true. Scenarios:
 - null:   acceptance depends on claim type and truth only; marks, conditions and the interpreter
@@ -22,6 +23,7 @@ if __package__ in (None, ""):
 
 from src import build_documents as B
 from src import runner as R
+from src.providers import PROVIDERS
 
 INFLATION = 0.30          # C1-C4 rise in P(accept) in the effect scenario (real-obscure)
 INVENTED_EXTRA = 0.10     # extra rise on invented items (H5 direction)
@@ -87,6 +89,8 @@ def generate(out_dir: Path, scenario: str = "effect", seed: int = 0, cfg: dict |
                 "model_id": cfg["models"][name]["model_id"], "claim_id": cell.claim_id, "pair_id": claim["pair_id"],
                 "claim_type": claim["claim_type"], "truth_value": claim["truth_value"], "condition": cell.condition,
                 "interpreter": cell.interpreter, "rep": cell.rep, "attempt": 2 if failed else 1,
+                "temperature": R.setting(cfg, name, "temperature"),
+                "reasoning_setting": PROVIDERS[cfg["models"][name]["provider"]].reasoning_setting(cfg["models"][name]),
                 "raw_text": json.dumps(parsed) if parsed else "not json", "parsed": parsed,
                 "parse_error": "synthetic parse failure" if failed else None,
                 "status": "parse_failed" if failed else "ok", "usage": usage,
@@ -116,14 +120,33 @@ def synthetic_judgements(graded_dir: Path, scenario: str = "effect", seed: int =
     return len(sample)
 
 
+def grade_with_fake_judge(raw_dir: Path, graded_dir: Path, scenario: str = "effect", seed: int = 0) -> int:
+    """Grade synthetic raw data and add fake judge scores, drawing the judge sample exactly as
+    grade.py --judge would. No API call is made."""
+    from src import grade as G
+    cfg = R.load_config(R.REPO / "models.yaml")
+    rows = G.grade_metrics(cfg, Path(raw_dir), Path(graded_dir))
+    jcfg = cfg["judge"]
+    sample = G.stratified_sample(G.judge_pool(rows), int(jcfg.get("sample_size", 600)), int(jcfg.get("seed", 0)))
+    G.write_csv(Path(graded_dir) / "judge_sample.csv",
+                [{"response_id": r["response_id"], "model": r["model"], "condition": r["condition"],
+                  "claim_type": r["claim_type"]} for r in sample], ["response_id", "model", "condition", "claim_type"])
+    return synthetic_judgements(graded_dir, scenario, seed)
+
+
 def main(argv=None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=R.DATA / "synthetic" / "raw")
     ap.add_argument("--scenario", choices=("effect", "null"), default="effect")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--graded-dir", type=Path, help="also grade it there and add fake judge scores (rehearsal)")
     a = ap.parse_args(argv)
     counts = generate(a.out, a.scenario, a.seed)
     print(f"synthetic {a.scenario} data -> {a.out}: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    if a.graded_dir:
+        n = grade_with_fake_judge(a.out, a.graded_dir, a.scenario, a.seed)
+        print(f"fake judge scores for {n} sampled responses -> {a.graded_dir / 'judgements.jsonl'}")
     return 0
 
 

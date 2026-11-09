@@ -1,6 +1,9 @@
 # secrets
 .env
 
+# rehearsal output from src/synthetic.py: fake data, never results
+data/synthetic/
+
 # Python caches
 __pycache__/
 *.pyc
