@@ -292,8 +292,9 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
     if interp_models:
         none = subset(pair_values(df, interp_models, False, "both"), types)
         withi = subset(pair_values(df, interp_models, True, "both"), types)
-        a = none[[c for c in ("C1", "C2") if c in none]].mean(axis=1) if not none.empty else pd.Series(dtype=float)
-        b = withi[[c for c in ("C1", "C2") if c in withi]].mean(axis=1) if not withi.empty else pd.Series(dtype=float)
+        arm = [c for c in ("C1", "C2") if c in none and c in withi]  # like with like, e.g. after a cut to C1 only
+        a = none[arm].mean(axis=1) if arm else pd.Series(dtype=float)
+        b = withi[arm].mean(axis=1) if arm else pd.Series(dtype=float)
         res = paired(a, b, rng)
         gap = minus(a, col(none, "C0"))
         res["gap_without_interpreter"] = float(gap.mean()) if len(gap) else np.nan
@@ -426,6 +427,27 @@ def rep_variance_table(df) -> pd.DataFrame:
     return s.groupby(["model", "condition", "interpreter"]).agg(
         cells=("n_reps", "size"), mean_within_cell_variance=("var", "mean"),
         share_cells_where_reps_disagree=("split", "mean")).reset_index()
+
+
+def example_justifications(df, scope, n=6) -> str:
+    """Candidates for the two verbatim examples in §4.5: misattribution in C2 (score 0) and correct
+    scope (score 2). Picked deterministically; the author reads them and chooses."""
+    lines = ["# Example justifications (candidates for §4.5)", "",
+             "Read each one before quoting it: a score of 0 also covers 'treats the credential as support', "
+             "so check that the C2 example really attributes the gathered statement to the signer.", ""]
+    if scope.empty:
+        return "\n".join(lines + ["_No scope scores yet._"]) + "\n"
+    d = df[~df["interpreter"]].merge(scope, on="response_id").sort_values("response_id")
+    for title, sel in (("Score 0 in C2 (statement only gathered, not attributed to the signer)",
+                        (d["condition"] == "C2") & (d["score"] == "0")),
+                       ("Score 2 (scope described correctly), C1-C4", d["score"] == "2")):
+        pick = d[sel]
+        lines += [f"## {title}", "", f"{len(pick)} in total; the first {min(n, len(pick))} by response id:", ""]
+        for _, r in pick.head(n).iterrows():
+            lines += [f"- `{r['response_id']}` ({r['claim_type']}, {'true' if r['truth_value'] else 'false'} claim, "
+                      f"accept={r['accept']}): \"{str(r['justification']).strip()}\""]
+        lines += [""]
+    return "\n".join(lines) + "\n"
 
 
 def model_scope_correct(df, scope, model) -> float:
@@ -1010,6 +1032,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     stab = scope_table(df, scope)
     stab.to_csv(out / "scope_accuracy.csv", index=False)
     rep_variance_table(df).to_csv(out / "rep_variance.csv", index=False)
+    (out / "example_justifications.md").write_text(example_justifications(df, scope), encoding="utf-8", newline="\n")
 
     pf_path = Path(graded_dir) / "parse_failures.csv"
     pf = {r["model"]: r for r in G.read_csv(pf_path)} if pf_path.exists() else {}
@@ -1181,6 +1204,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "| `h5_unrecognised_sources.csv` | H5 (exploratory) |",
               "| `rep_variance.csv` | Repetition variance (§7) |",
               "| `per_model.csv` | Per-model summary (§4.8) |",
+              "| `example_justifications.md` | Candidate verbatim examples for §4.5 |",
               "| `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |"]
     return "\n".join(lines) + "\n"
 

@@ -165,8 +165,9 @@ def plan_cells(cfg: dict, name: str, claims: list[dict], *, reps=None, claim_fil
         for c in claims:
             cells += [Cell(name, c["id"], cond, False, r) for cond in B.CONDITIONS for r in reps]
         if m.get("interpreter_arm"):
+            arm = m.get("interpreter_conditions", cfg["defaults"].get("interpreter_conditions", ("C1", "C2")))
             for c in claims:
-                cells += [Cell(name, c["id"], cond, True, r) for cond in ("C1", "C2") for r in reps]
+                cells += [Cell(name, c["id"], cond, True, r) for cond in arm for r in reps]
     elif m["design"] == "spot_check":
         spot = m["spot_check"]
         for c in claims:

@@ -96,6 +96,19 @@ def test_plan_counts():
     assert len(keys) == len(set(keys))
 
 
+def test_interpreter_arm_conditions_come_from_the_config():
+    cfg, claims = R.load_config(R.REPO / "models.yaml"), R.B.load_claims()
+    arm = [c for c in R.plan_cells(cfg, "qwen3.8-27b", claims) if c.interpreter]
+    assert {c.condition for c in arm} == {"C1", "C2"} and len(arm) == 240
+    cfg["defaults"]["interpreter_conditions"] = ["C1"]              # CLAUDE.md cut order, step 1
+    arm = [c for c in R.plan_cells(cfg, "qwen3.8-27b", claims) if c.interpreter]
+    assert {c.condition for c in arm} == {"C1"} and len(arm) == 120
+    assert len(R.plan_cells(cfg, "qwen3.8-27b", claims)) == 840
+    assert len(R.plan_cells(cfg, "gemini-3.5-flash-lite", claims)) == 720   # no interpreter arm
+    del cfg["defaults"]["interpreter_conditions"]                   # older configs keep C1 and C2
+    assert len([c for c in R.plan_cells(cfg, "qwen3.8-27b", claims) if c.interpreter]) == 240
+
+
 def test_order_is_reproducible_and_shuffled():
     cfg, claims = R.load_config(R.REPO / "models.yaml"), R.B.load_claims()
     cells = R.plan_cells(cfg, "gpt-oss-120b", claims)

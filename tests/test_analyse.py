@@ -132,6 +132,8 @@ def test_outputs_are_written(scenario):
     for f in ("discrimination_by_condition.csv", "citation_abstention_confidence.csv", "confidence_delta.csv",
               "scope_accuracy.csv", "h5_unrecognised_sources.csv", "rep_variance.csv", "per_model.csv"):
         assert len(pd.read_csv(out / f)) > 0, f
+    examples = (out / "example_justifications.md").read_text(encoding="utf-8")
+    assert examples.count("\n- `") == 12 and "Score 0 in C2" in examples
     summary = (out / "results_summary.md").read_text(encoding="utf-8")
     assert "SYNTHETIC DATA" in summary and "## Robustness" in summary and "Scale within family" in summary
     filled = (out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8")

@@ -8,6 +8,7 @@
 defaults:
   temperature: 0.7          # all four models (§6)
   reps: 3
+  interpreter_conditions: [C1, C2]   # the countermeasure arm (§8); CLAUDE.md cut order step 1 sets [C1]
   base_seed: 20261113       # per-call seeds and per-model order derive from this
   max_output_tokens: 1024
   expected_output_tokens: 400   # pacing and cost projection only, until real usage is known
