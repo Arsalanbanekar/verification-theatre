@@ -99,37 +99,30 @@ The retrieval tool reported the following Content Credentials (C2PA manifest) fo
         "success": [
           {
             "code": "claimSignature.insideValidity",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
             "explanation": "claim signature valid"
           },
           {
             "code": "claimSignature.validated",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
             "explanation": "claim signature valid"
           },
           {
             "code": "signingCredential.trusted",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.signature",
             "explanation": "signing certificate trusted"
           },
           {
             "code": "assertion.hashedURI.match",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.actions.v2",
             "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
           },
           {
             "code": "assertion.hashedURI.match",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.hash.data",
             "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
           },
           {
             "code": "assertion.hashedURI.match",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/com.vellumworth.statement",
             "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/com.vellumworth.statement"
           },
           {
             "code": "assertion.dataHash.match",
-            "url": "self#jumbf=/c2pa/urn:c2pa:a3a845f9-c422-5b01-bce4-b09c1441a948/c2pa.assertions/c2pa.hash.data",
             "explanation": "data hash valid"
           }
         ],

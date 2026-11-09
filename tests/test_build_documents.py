@@ -111,6 +111,15 @@ def test_manifest_position_constant():
             assert u.index("```json") < u.index("Based on the document")
 
 
+def test_validation_entries_have_code_and_explanation_only():
+    for c in CLAIMS[:4]:
+        for cond in MARKED:
+            vr = m0(B.render_manifest(CTX, c, cond))["validationResults"]
+            for group in ("success", "informational", "failure"):
+                for e in vr[group]:
+                    assert list(e) == ["code", "explanation"]
+
+
 def test_c0_has_no_manifest():
     for c in CLAIMS:
         u = user(c, "C0")

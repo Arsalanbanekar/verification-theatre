@@ -13,7 +13,8 @@
     "Simplification: c2pa.hash.data omits the exclusions list that a real text-format binding would carry for the embedded manifest block.",
     "Spec choice: the first action is c2pa.created with a digitalSourceType, as C2PA 2.4 requires; digitalCreation is the IPTC term for content made by a person with digital tools.",
     "Spec inconsistency: crJSON §3.8 places validationTime inside validationResults, while its §4 example places it beside it; this follows §3.8.",
-    "Spec inconsistency: crJSON §3.5.2 requires the b64' prefix on hash values, while its §3.5.1 example omits it; this follows §3.5.2."
+    "Spec inconsistency: crJSON §3.5.2 requires the b64' prefix on hash values, while its §3.5.1 example omits it; this follows §3.5.2.",
+    "Validation entries carry code and explanation only; the optional url field (crJSON §3.8: 'optionally url and explanation') is omitted."
   ],
   "manifest": {
     "@context": {
@@ -104,37 +105,30 @@
           "success": [
             {
               "code": "claimSignature.insideValidity",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
               "explanation": "claim signature valid"
             },
             {
               "code": "claimSignature.validated",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
               "explanation": "claim signature valid"
             },
             {
               "code": "signingCredential.trusted",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.signature",
               "explanation": "signing certificate trusted"
             },
             {
               "code": "assertion.hashedURI.match",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.actions.v2",
               "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
             },
             {
               "code": "assertion.hashedURI.match",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.hash.data",
               "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
             },
             {
               "code": "assertion.hashedURI.match",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/{{NS}}.statement",
               "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/{{NS}}.statement"
             },
             {
               "code": "assertion.dataHash.match",
-              "url": "self#jumbf=/c2pa/{{MANIFEST_URN}}/c2pa.assertions/c2pa.hash.data",
               "explanation": "data hash valid"
             }
           ],
