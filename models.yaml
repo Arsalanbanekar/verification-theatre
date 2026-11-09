@@ -1,19 +1,21 @@
-# Study models, limits and request settings. Read by src/runner.py.
-# Provider docs read 2026-11-08: console.groq.com/docs (models, reasoning, structured-outputs,
-# rate-limits, api-reference) and ai.google.dev/gemini-api/docs (now served from aistudio.google.com).
+# Study models, limits, prices and request settings (PREREGISTRATION.md rev 3.2, §5-§6).
+# Read by src/runner.py and src/grade.py. Provider docs read 2026-11-08/09.
 #
-# Reasoning: every model runs at the lowest reasoning setting its provider documents, logged
-# with every call. The settings are not identical in kind across providers: gpt-oss cannot
-# switch reasoning off ("low" is its floor), Qwen's floor "none" disables it, and Gemini's
-# "MINIMAL" is the lowest documented thinking level.
+# Reasoning: each model runs at the lowest reasoning setting its provider documents, logged
+# with every call. gpt-oss cannot switch reasoning off ("low" is its floor); Qwen's "none"
+# disables it; Gemini's floor is "MINIMAL". No service_tier is ever sent.
 
 defaults:
-  temperature: 0.7          # PREREGISTRATION.md §6
+  temperature: 0.7          # all four models (§6)
   reps: 3
-  base_seed: 20261113       # per-call seeds and per-model order are derived from this
+  base_seed: 20261113       # per-call seeds and per-model order derive from this
   max_output_tokens: 1024
-  expected_output_tokens: 400   # used only to pace requests against TPM/TPD before usage is known
+  expected_output_tokens: 400   # pacing and cost projection only, until real usage is known
   request_timeout_s: 120
+
+budget:
+  hard_stop_usd: 4.50       # total spend on disk (data/raw + data/pilot), all models; runner stops at this
+  pilot_warn_usd: 4.00      # the pilot report warns if the projected full run exceeds this
 
 models:
   gpt-oss-120b:
@@ -21,12 +23,11 @@ models:
     model_id: openai/gpt-oss-120b          # Production
     tier: core
     design: full
-    interpreter_arm: true                  # C1 and C2 with the interpreter (§8, core models only)
-    # Groq rate-limits table. Its models page shows different figures (1K RPM, 250K TPM), and the
-    # free-tier values were not in the fetched pages: check console.groq.com/settings/limits.
-    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    interpreter_arm: true                  # C1 and C2 with the interpreter (§8)
+    limits: {rpm: 1000, rpd: 500000, tpm: 250000}     # Groq Developer plan; no TPD
+    price_usd_per_mtok: {input: 0.15, output: 0.60}
     max_output_tokens: 2048                # reasoning tokens count against this
-    reasoning: {reasoning_effort: low, include_reasoning: true}   # "low" is the floor; reasoning cannot be disabled
+    reasoning: {reasoning_effort: low, include_reasoning: true}
 
   gpt-oss-20b:
     provider: groq
@@ -34,7 +35,8 @@ models:
     tier: core
     design: full
     interpreter_arm: true
-    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+    limits: {rpm: 1000, rpd: 500000, tpm: 250000}
+    price_usd_per_mtok: {input: 0.075, output: 0.30}
     max_output_tokens: 2048
     reasoning: {reasoning_effort: low, include_reasoning: true}
 
@@ -44,21 +46,10 @@ models:
     tier: core
     design: full
     interpreter_arm: true
-    limits: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
-    # "none" is the lowest documented value ("Disable reasoning"). JSON mode requires
-    # reasoning_format parsed or hidden.
-    reasoning: {reasoning_effort: none, reasoning_format: parsed}
-
-  gemini-3.1-flash-lite:
-    provider: gemini
-    model_id: gemini-3.1-flash-lite        # Stable; shutdown no earlier than 7 May 2027
-    tier: replication
-    design: full
-    interpreter_arm: false
-    limits: {rpm: 15, rpd: 500, tpm: 250000}    # CLAUDE.md; the docs point to AI Studio's live page
-    # MINIMAL is the lowest documented level for Gemini 3 Flash models. Levels for 3.1 Flash-Lite
-    # are not documented: confirm in the pilot that this is accepted.
-    generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
+    limits: {rpm: 1000, rpd: 500000, tpm: 282000}
+    price_usd_per_mtok: {input: 0.80, output: 4.00}
+    max_output_tokens: 600
+    reasoning: {reasoning_effort: none, reasoning_format: parsed}   # JSON mode needs parsed or hidden
 
   gemini-3.5-flash-lite:
     provider: gemini
@@ -66,19 +57,21 @@ models:
     tier: replication
     design: full
     interpreter_arm: false
-    limits: {rpm: 15, rpd: 500, tpm: 250000}
+    limits: {rpm: 15, rpd: 500, tpm: 250000}   # free tier; RPD resets at midnight Pacific
+    price_usd_per_mtok: {input: 0.0, output: 0.0}   # free tier
     generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
 
-  gemini-3.6-flash:
-    provider: gemini
-    model_id: gemini-3.6-flash             # Stable
-    tier: spot_check
-    design: spot_check
-    interpreter_arm: false
-    # 10 claims = 5 twin pairs drawn with seed 20261113 (3 real-obscure, 2 invented).
-    spot_check: {pairs: [real-01, real-03, real-10, inv-01, inv-06], conditions: [C0, C1]}
-    limits: {rpm: 5, rpd: 20, tpm: 250000}
-    # Temperature is "no longer supported and is silently ignored on Gemini 3.6 Flash and newer"
-    # and is due to become a 400 error, so it is not sent (protocol says 0.7; see STATUS.md).
-    temperature: null
-    generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
+# Scope-accuracy judge (§5). Not a study model; never shown model, condition label or truth.
+judge:
+  provider: gemini
+  model_id: gemma-4-31b-it                 # "The Gemini API supports the following Gemma 4 models"
+  # Gemma free-tier limits are not documented (only on AI Studio's live rate-limit page).
+  # These conservative values pace the judge; raise them if AI Studio shows more.
+  limits: {rpm: 15, rpd: 1000, tpm: 15000}
+  price_usd_per_mtok: {input: 0.0, output: 0.0}
+  temperature: 0.0
+  max_output_tokens: 400
+  # JSON mode is not documented for Gemma, so the reply is parsed from text.
+  generation_config: {thinkingConfig: {thinkingLevel: MINIMAL}}
+  sample_size: 600
+  seed: 20261113

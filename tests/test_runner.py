@@ -85,10 +85,12 @@ def events(env, model="gpt-oss-120b"):
 def test_plan_counts():
     cfg, claims = R.load_config(R.REPO / "models.yaml"), R.B.load_claims()
     n = {m: len(R.plan_cells(cfg, m, claims)) for m in cfg["models"]}
-    assert n == {"gpt-oss-120b": 960, "gpt-oss-20b": 960, "qwen3.8-27b": 960, "gemini-3.1-flash-lite": 720,
-                 "gemini-3.5-flash-lite": 720, "gemini-3.6-flash": 60}
-    spot = R.plan_cells(cfg, "gemini-3.6-flash", claims)
-    assert {c.condition for c in spot} == {"C0", "C1"} and len({c.claim_id for c in spot}) == 10
+    assert n == {"gpt-oss-120b": 960, "gpt-oss-20b": 960, "qwen3.8-27b": 960, "gemini-3.5-flash-lite": 720}
+    spot_cfg = {"defaults": cfg["defaults"], "models": {"s": {
+        "provider": "gemini", "model_id": "x", "design": "spot_check",
+        "spot_check": {"pairs": ["real-01", "inv-06"], "conditions": ["C0", "C1"]}}}}
+    spot = R.plan_cells(spot_cfg, "s", claims)
+    assert {c.condition for c in spot} == {"C0", "C1"} and len({c.claim_id for c in spot}) == 4
     keys = [c.key() for c in R.plan_cells(cfg, "gpt-oss-120b", claims)]
     assert len(keys) == len(set(keys))
 
@@ -110,7 +112,7 @@ def test_dry_run_makes_no_calls_and_writes_nothing(env, monkeypatch, capsys):
     monkeypatch.setattr(gemini, "send", FakeSend())
     assert run(env, "--dry-run") == 0
     out = capsys.readouterr().out
-    assert "TOTAL" in out and "4380" in out
+    assert "TOTAL" in out and "3600" in out
     assert not env["out"].exists() and not env["logs"].exists()
 
 
@@ -202,8 +204,8 @@ def test_gemini_429s_are_classified(env, monkeypatch):
     assert (day.scope, day.wait_s) == ("day", 41.0) and (minute.scope, minute.wait_s) == ("minute", 7.0)
     monkeypatch.setattr(gemini, "send", FakeSend(gemini_429("GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),
                                                  default=gemini_ok))
-    run(env, "--models", "gemini-3.1-flash-lite", "--claims", "real-04-t", "--conditions", "C1", "--reps", "1")
-    assert [r["status"] for r in raw(env, "gemini-3.1-flash-lite")] == ["ok"]
+    run(env, "--models", "gemini-3.5-flash-lite", "--claims", "real-04-t", "--conditions", "C1", "--reps", "1")
+    assert [r["status"] for r in raw(env, "gemini-3.5-flash-lite")] == ["ok"]
 
 
 def test_fatal_http_error_stops_the_model(env, monkeypatch):
@@ -250,19 +252,25 @@ def test_groq_payloads(env, monkeypatch):
     assert p["max_completion_tokens"] == 2048
     q = _payloads(env, monkeypatch, "qwen3.8-27b", groq)
     assert q["model"] == "qwen/qwen3.8-27b" and q["reasoning_effort"] == "none" and q["reasoning_format"] == "parsed"
-    assert "include_reasoning" not in q
+    assert "include_reasoning" not in q and q["max_completion_tokens"] == 600
+    assert "service_tier" not in p and "service_tier" not in q
 
 
 def test_gemini_payloads(env, monkeypatch):
-    p = _payloads(env, monkeypatch, "gemini-3.1-flash-lite", gemini)
+    p = _payloads(env, monkeypatch, "gemini-3.5-flash-lite", gemini)
     gc = p["generationConfig"]
     assert gc["temperature"] == 0.7 and isinstance(gc["seed"], int) and gc["responseMimeType"] == "application/json"
     assert gc["thinkingConfig"] == {"thinkingLevel": "MINIMAL", "includeThoughts": False}
     assert p["systemInstruction"]["parts"][0]["text"].startswith("You are assisting with a research task.")
     assert [c["role"] for c in p["contents"]] == ["user"]
-    fake = FakeSend(default=gemini_ok)  # 3.6 Flash: temperature is not sent
+    cfg = yaml.safe_load((R.REPO / "models.yaml").read_text(encoding="utf-8"))
+    cfg["models"]["gemini-3.5-flash-lite"]["temperature"] = None   # a model whose provider ignores temperature
+    path = env["tmp"] / "nulltemp.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    fake = FakeSend(default=gemini_ok)
     monkeypatch.setattr(gemini, "send", fake)
-    run(env, "--models", "gemini-3.6-flash", "--claims", "real-01-t", "--conditions", "C1", "--reps", "1")
+    run(env, "--config", str(path), "--models", "gemini-3.5-flash-lite", "--claims", "real-01-t",
+        "--conditions", "C1", "--reps", "1")
     assert "temperature" not in fake.calls[0]["generationConfig"]
 
 
