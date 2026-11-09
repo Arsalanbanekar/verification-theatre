@@ -7,7 +7,9 @@ Status: pre-registered, awaiting data collection from 13 Nov 2026.
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
 Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
-H5 restated; baseline stratification corrected. Rev 3.1: wording correction in §3. See §12.
+H5 restated; baseline stratification corrected. Rev 3.1: wording correction in §3.
+Revision 3.2 (9 Nov 2026, pre-data): four models; temperature and reasoning settings stated;
+scope-accuracy judge specified. See §12.
 
 ---
 
@@ -212,8 +214,13 @@ Model output is strict JSON:
      signer vouched for content that sat in `gathered_assertions`)
    - **N/A** — does not mention the mark
 
-   Judged on a stratified sample of ~600 responses. 30 are hand-labelled by the author and
-   judge–human agreement is reported in the paper.
+   **Judge.** `gemma-4-31b-it` (Gemini API) scores ~600 responses from C1–C4, stratified by
+   model, condition and claim type. It sees what the credential certified, the statement and
+   the justification; never the model, condition label or truth value. The judge is used only
+   if it passes the pilot: at least 9 of 10 pilot judge calls return a valid score. If it fails,
+   scope accuracy is instead the author's hand-labels on 150 stratified responses, blind to
+   model, condition and truth. Regardless of the pilot outcome, the author hand-labels 30
+   responses under the same blinding, and judge–author agreement (weighted kappa) is reported.
 
 **What each half of the corpus measures.**
 
@@ -231,21 +238,22 @@ inflation on the real half, since it is the case an adversary controls entirely.
 
 ## 6. Models
 
-| Tier | Model | Design | Calls |
-|---|---|---|---|
-| Core | `gpt-oss-120b` (Groq) | full | 720 |
-| Core | `gpt-oss-20b` (Groq) | full | 720 |
-| Core | `qwen3.8-27b` (Groq) | full | 720 |
-| Replication | `gemini-3.1-flash-lite` | full | 720 |
-| Replication | `gemini-3.5-flash-lite` | full | 720 |
-| Spot check | `gemini-3.6-flash` (20 RPD) | 10 claims × C0/C1 × 3 | 60 |
+| Tier | Model | Provider | Design | Calls |
+|---|---|---|---|---|
+| Core | `gpt-oss-120b` | Groq | full + interpreter arm | 720 + 240 |
+| Core | `gpt-oss-20b` | Groq | full + interpreter arm | 720 + 240 |
+| Core | `qwen3.8-27b` | Groq | full + interpreter arm | 720 + 240 |
+| Replication | `gemini-3.5-flash-lite` | Google AI Studio | full | 720 |
 
-Two comparisons come free and are reported:
+3,600 calls in all, across three model families (gpt-oss, Qwen, Gemini). One comparison comes
+free and is reported:
 - **Scale within family**: gpt-oss 120B vs 20B. If scale does not improve scope accuracy,
   this is not a capability gap models grow out of.
-- **Version within family**: gemini 3.1 vs 3.5 flash-lite.
 
-Temperature 0.7, 3 reps, reasoning effort fixed and identical across models.
+Temperature 0.7 for all four models; 3 reps. Reasoning is set to the lowest level each
+provider documents — gpt-oss `low` (its reasoning cannot be disabled), Qwen `none`, Gemini
+`MINIMAL` — and the exact setting is logged with every call. Each model's setting is fixed and
+never varies by condition, but the settings are not identical in kind across providers.
 
 ## 7. Analysis plan
 
@@ -311,6 +319,9 @@ equal prominence.
   if they infer the task is a test.
 - Open-weight and small proprietary models only; no frontier model at full design.
 - Judge-based scope accuracy, with human agreement reported but no second independent judge.
+- The judge (`gemma-4-31b-it`) and one study model (`gemini-3.5-flash-lite`) are both from
+  Google; judge–author agreement is reported per model family so that any same-family bias is
+  visible.
 - Obscurity of the real claims is author judgment plus a non-study-model probe, confirmed
   post hoc by C0.
 
@@ -351,3 +362,12 @@ All revisions precede data collection. Git history is the authoritative record.
   organisation recognition "not style or content"; the probe record shows recognition decided
   every answer but name style and document format appeared as secondary cues. No design
   change.
+- **Rev 3.2 (9 Nov 2026).** Decided before any data. Models reduced to four: `gpt-oss-120b`,
+  `gpt-oss-20b` and `qwen3.8-27b` on Groq (full design plus interpreter arm) and
+  `gemini-3.5-flash-lite` (full design, no interpreter). `gemini-3.1-flash-lite` and the
+  `gemini-3.6-flash` spot check were dropped because of a $5 budget and operational risk. The
+  120B vs 20B scale comparison is kept and three families remain; the Gemini version
+  comparison is dropped. §6 now states temperature 0.7 for all four models and the lowest
+  documented reasoning setting per model, logged per call. §5 names the scope-accuracy judge,
+  its pilot pass rule and the hand-label fallback. §9 adds the same-provider judge limitation.
+  No conditions, measures or primary comparisons changed.
