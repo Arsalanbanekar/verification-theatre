@@ -64,8 +64,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     out, logs = tmp_path / "raw", tmp_path / "logs"
+    monkeypatch.setattr(R, "SPEND_DIRS", (out, tmp_path / "pilot"))   # never read the real data/
     return {"out": out, "logs": logs, "tmp": tmp_path,
-            "args": ["--out-dir", str(out), "--logs-dir", str(logs), "--progress-every", "999"]}
+            "args": ["--out-dir", str(out), "--logs-dir", str(logs), "--progress-every", "999", "--yes"]}
 
 
 def run(env, *extra):
@@ -226,6 +227,77 @@ def test_local_daily_cap_stops_before_the_provider_does(env, monkeypatch):
     monkeypatch.setattr(groq, "send", fake)
     run(env, "--config", str(path), "--models", "gpt-oss-120b", "--claims", "real-01-t", "--reps", "1")
     assert len(fake.calls) == 2 and events(env)[-1]["event"] == "daily_limit"
+
+
+def test_http_498_is_transient_and_retried(env, monkeypatch):
+    busy = HttpResult(498, {}, {"error": {"message": "capacity exceeded"}}, '{"error": "498"}', 0.1)
+    monkeypatch.setattr(groq, "send", FakeSend(busy, busy, default=groq_ok))
+    run(env, "--models", "gpt-oss-20b", "--claims", "real-02-t", "--conditions", "C0", "--reps", "1")
+    assert [r["status"] for r in raw(env, "gpt-oss-20b")] == ["ok"]
+    assert [e["status"] for e in events(env, "gpt-oss-20b")] == [498, 498]
+
+
+def test_blocked_api_access_stops_every_groq_model(env, monkeypatch, capsys):
+    blocked = lambda: HttpResult(400, {}, {"error": {"message": "Organization blocked", "code": "blocked_api_access"}},
+                                 '{"error": {"code": "blocked_api_access"}}', 0.1)
+    gfake = FakeSend(default=blocked)
+    monkeypatch.setattr(groq, "send", gfake)
+    monkeypatch.setattr(gemini, "send", FakeSend(default=gemini_ok))
+    run(env, "--models", "gpt-oss-120b,gpt-oss-20b,qwen3.8-27b,gemini-3.5-flash-lite",
+        "--claims", "real-01-t", "--reps", "1")
+    for m in ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b"):
+        assert raw(env, m) == []
+    assert len(gfake.calls) <= 3           # at most one in-flight call per Groq model
+    assert len(raw(env, "gemini-3.5-flash-lite")) == 6   # Gemini is unaffected
+    assert "blocked_api_access" in capsys.readouterr().out
+
+
+def test_cost_is_recorded_per_response(env, monkeypatch):
+    monkeypatch.setattr(groq, "send", FakeSend(default=groq_ok))
+    run(env, "--models", "qwen3.8-27b", "--claims", "inv-01-t", "--conditions", "C0", "--reps", "1")
+    r = raw(env, "qwen3.8-27b")[0]
+    assert (r["input_tokens"], r["output_tokens"]) == (1500, 200)
+    assert r["cost_usd"] == pytest.approx(1500 * 0.80e-6 + 200 * 4.00e-6)
+    assert r["prompt_tokens_est"] > 0
+
+
+def test_budget_hard_stop_holds_across_concurrent_models(env, monkeypatch):
+    cfg = yaml.safe_load((R.REPO / "models.yaml").read_text(encoding="utf-8"))
+    cfg["budget"]["hard_stop_usd"] = 0.02
+    path = env["tmp"] / "models.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(groq, "send", FakeSend(default=groq_ok))
+    run(env, "--config", str(path), "--models", "gpt-oss-120b,gpt-oss-20b,qwen3.8-27b", "--claims", "real-01,real-02")
+    spent = sum(r["cost_usd"] for m in ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b") for r in raw(env, m))
+    calls = sum(len(raw(env, m)) for m in ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b"))
+    assert 0 < spent <= 0.02 and calls < 3 * 64          # stopped before finishing
+    assert any(e["event"] == "budget_stop" for m in ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b")
+               for e in events(env, m))
+
+
+def test_main_run_asks_before_spending(env, monkeypatch, capsys):
+    fake = FakeSend(default=groq_ok)
+    monkeypatch.setattr(groq, "send", fake)
+    args = [a for a in env["args"] if a != "--yes"]
+    sel = ["--models", "gpt-oss-20b", "--claims", "real-03-t", "--conditions", "C0", "--reps", "1"]
+    monkeypatch.setattr("builtins.input", lambda q: "n")
+    assert R.main(sel + args) == 1 and fake.calls == []
+    out = capsys.readouterr().out
+    assert "Projected total spend $" in out and "Not started" in out
+    monkeypatch.setattr("builtins.input", lambda q: "y")
+    assert R.main(sel + args) == 0 and len(fake.calls) == 1
+    def no_question(q):
+        raise AssertionError("--yes must not ask")
+    monkeypatch.setattr("builtins.input", no_question)
+    assert R.main(sel[:-1] + ["2"] + args + ["--yes"]) == 0   # widen to 2 reps: one new call, no question
+    assert len(fake.calls) == 2
+
+
+def test_dry_run_projects_cost(env, monkeypatch, capsys):
+    monkeypatch.setattr(groq, "send", FakeSend())
+    run(env, "--dry-run")
+    out = capsys.readouterr().out
+    assert "~$ left" in out and "Projected total spend $" in out and "hard stop $4.50" in out
 
 
 def test_limit_flag_caps_calls(env, monkeypatch):

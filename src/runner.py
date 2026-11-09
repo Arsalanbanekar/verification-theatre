@@ -1,18 +1,22 @@
-"""Run the study: dispatch, rate limits, retries and resumption. One worker thread per model.
+"""Run the study: dispatch, rate limits, cost, retries and resumption. One worker thread per model.
 
-  python src/runner.py --dry-run            build every prompt and count calls; no API calls, no writes
-  python src/runner.py                      run every configured model until done or out of quota
-  python src/runner.py --models gpt-oss-120b,gemini-3.1-flash-lite
+  python src/runner.py --dry-run            build every prompt, count calls, project cost; no calls, no writes
+  python src/runner.py                      the main run: shows projected cost, asks y/n, then runs
+  python src/runner.py --yes                the same without the question
+  python src/runner.py --models gpt-oss-120b,gemini-3.5-flash-lite
   python src/runner.py --check-models       confirm the configured model IDs exist (lists models only)
 
-Subsets, e.g. for the pilot:
-  --claims real-01-t,inv-01 (claim or pair ids)  --conditions C0,C1  --reps 1  --limit 30
-  --out-dir data/pilot  (keep pilot data out of data/raw)
+Subsets: --claims real-01-t,inv-01 (claim or pair ids)  --conditions C0,C1  --reps 1  --limit 30
 
 Data. data/raw/{model}.jsonl is append-only, one line per model response, flushed and fsynced
 after each. A cell (model, claim_id, condition, interpreter, rep) is done once it has a line
-with status "ok" or "parse_failed"; re-running skips done cells. Rate-limit and error events go
-to data/logs/{model}.events.jsonl, the randomised cell order to data/logs/{model}.order.*.json.
+with status "ok" or "parse_failed"; re-running skips done cells. Events (rate limits, errors,
+stops) go to data/logs/{model}.events.jsonl; the randomised cell order to data/logs/.
+
+Cost. Every response's USD cost is computed from its measured token usage and the prices in
+models.yaml, and written to its raw line. All spend on disk (data/raw and data/pilot) counts
+against budget.hard_stop_usd; each call reserves its worst-case cost before it is sent, so the
+cap holds even with several models running at once.
 
 Keys come from the environment or a .env file: GROQ_API_KEY, GEMINI_API_KEY.
 """
@@ -44,8 +48,12 @@ from src.output_schema import SCHEMA, parse_response
 from src.providers import PROVIDERS
 
 REPO = Path(__file__).resolve().parents[1]
+DATA = REPO / "data"
+SPEND_DIRS = (DATA / "raw", DATA / "pilot")   # every response here counts against the budget
 DONE_STATUSES = ("ok", "parse_failed")
-CHARS_PER_TOKEN = 3.6           # rough prompt-size estimate, used only for pacing and the dry run
+CHARS_PER_TOKEN = 3.6           # rough prompt-size estimate, calibrated against measured usage when available
+INPUT_MARGIN = 1.5              # worst-case factor on the prompt estimate when reserving budget
+TRANSIENT_STATUSES = {408, 409, 498}   # plus every 5xx; 498 is Groq "capacity exceeded"
 MAX_TRANSIENT_RETRIES = 5
 MAX_UNCLASSIFIED_429 = 6        # consecutive unclassifiable 429s are treated as a daily stop
 PRINT_LOCK = threading.Lock()
@@ -114,11 +122,13 @@ def load_config(path: Path) -> dict:
     for name, m in cfg["models"].items():
         if m["provider"] not in PROVIDERS:
             raise ValueError(f"{name}: unknown provider {m['provider']!r}")
+    cfg.setdefault("budget", {})
     return cfg
 
 
 def load_env(path: Path) -> None:
-    """Set variables from a .env file without overriding ones already in the environment."""
+    """Set variables from a .env file without overriding ones already in the environment.
+    Values are never printed."""
     if not Path(path).exists():
         return
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -192,7 +202,7 @@ def plan_hash(cells: list[Cell]) -> str:
 
 
 def read_raw(path: Path) -> list[dict]:
-    if not path.exists():
+    if not Path(path).exists():
         return []
     out = []
     with open(path, encoding="utf-8") as f:
@@ -234,6 +244,148 @@ def estimate_tokens(messages: list[dict]) -> int:
     return int(sum(len(m["content"]) for m in messages) / CHARS_PER_TOKEN)
 
 
+def unique_dirs(*dirs) -> list[Path]:
+    seen, out = set(), []
+    for d in dirs:
+        p = Path(d).resolve()
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+# ---------------------------------------------------------------- cost and budget
+
+def unit_prices(m: dict) -> tuple[float, float]:
+    """USD per input token and per output token."""
+    p = m.get("price_usd_per_mtok") or {}
+    return float(p.get("input", 0.0)) / 1e6, float(p.get("output", 0.0)) / 1e6
+
+
+def usage_cost(m: dict, usage: dict) -> tuple[int, int, float]:
+    tin, tout = PROVIDERS[m["provider"]].token_split(usage or {})
+    pin, pout = unit_prices(m)
+    return tin, tout, tin * pin + tout * pout
+
+
+def spend_on_disk(cfg: dict, dirs) -> dict[str, float]:
+    spent = {}
+    for name, m in cfg["models"].items():
+        for d in dirs:
+            for r in read_raw(Path(d) / f"{name}.jsonl"):
+                spent[name] = spent.get(name, 0.0) + usage_cost(m, r.get("usage") or {})[2]
+    return spent
+
+
+class Budget:
+    """Shared spend tracker. reserve() before a call, settle() after it."""
+
+    def __init__(self, cap_usd, spent_by_model):
+        self.cap = cap_usd
+        self.lock = threading.Lock()
+        self.spent = dict(spent_by_model)
+        self.reserved = 0.0
+        self._announced = False
+
+    def total(self) -> float:
+        with self.lock:
+            return sum(self.spent.values())
+
+    def reserve(self, amount: float) -> bool:
+        with self.lock:
+            if amount > 0 and self.cap is not None and sum(self.spent.values()) + self.reserved + amount > self.cap:
+                return False
+            self.reserved += amount
+            return True
+
+    def settle(self, model: str, reserved: float, actual: float) -> None:
+        with self.lock:
+            self.reserved -= reserved
+            self.spent[model] = self.spent.get(model, 0.0) + actual
+
+    def announce_once(self) -> bool:
+        with self.lock:
+            first, self._announced = not self._announced, True
+            return first
+
+
+def calibration(cfg: dict, name: str, dirs) -> tuple[float, float, int]:
+    """(measured/estimated prompt-token ratio, mean output tokens, responses measured) on disk."""
+    m = cfg["models"][name]
+    prov = PROVIDERS[m["provider"]]
+    est_sum = meas_sum = 0
+    outs = []
+    for d in dirs:
+        for r in read_raw(Path(d) / f"{name}.jsonl"):
+            tin, tout = prov.token_split(r.get("usage") or {})
+            if r.get("prompt_tokens_est") and tin:
+                est_sum += r["prompt_tokens_est"]
+                meas_sum += tin
+            if tout:
+                outs.append(tout)
+    ratio = meas_sum / est_sum if est_sum else 1.0
+    out = sum(outs) / len(outs) if outs else float(setting(cfg, name, "expected_output_tokens"))
+    return ratio, out, len(outs)
+
+
+def projection(cfg, plans, ctx, claims_by_id, out_dir, spend_dirs) -> tuple[list[dict], dict]:
+    """Per-model calls and USD still to spend, from measured token usage where it exists."""
+    spent = spend_on_disk(cfg, spend_dirs)
+    today = dt.date.today()
+    rows = []
+    for name, (cells, _seed) in plans.items():
+        m = cfg["models"][name]
+        done = done_keys(read_raw(Path(out_dir) / f"{name}.jsonl"))
+        ratio, out_tok, n_meas = calibration(cfg, name, spend_dirs)
+        pin, pout = unit_prices(m)
+        hashes, est_in = set(), []
+        for c in cells:  # build every prompt, not only the remaining ones
+            msgs = B.build_messages(ctx, claims_by_id[c.claim_id], c.condition, c.interpreter, today)
+            hashes.add(B.prompt_hash(msgs))
+            if c.key() not in done:
+                est_in.append(estimate_tokens(msgs) * ratio)
+        todo = len(est_in)
+        rows.append(dict(model=name, planned=len(cells), done=len(cells) - todo, todo=todo,
+                         in_per_call=(sum(est_in) / todo) if todo else 0.0, out_per_call=out_tok,
+                         usd_left=sum(e * pin + out_tok * pout for e in est_in), spent=spent.get(name, 0.0),
+                         basis=f"measured ({n_meas} responses)" if n_meas else "estimate",
+                         distinct_prompts=len(hashes), limits=m.get("limits") or {}))
+    return rows, spent
+
+
+def print_projection(cfg, rows, spent) -> float:
+    cap = cfg["budget"].get("hard_stop_usd")
+    header = (f"{'model':22} {'planned':>7} {'done':>6} {'to run':>6} {'~tok/call':>9} {'~days':>6} "
+              f"{'spent $':>8} {'~$ left':>8}  basis")
+    say(header)
+    say("-" * (len(header) + 12))
+    for r in rows:
+        per_call = r["in_per_call"] + r["out_per_call"]
+        lim = r["limits"]
+        caps = [lim["rpd"]] if lim.get("rpd") else []
+        if lim.get("tpd") and per_call:
+            caps.append(lim["tpd"] / per_call)
+        if lim.get("rpm"):
+            caps.append(lim["rpm"] * 60 * 24)
+        if lim.get("tpm") and per_call:
+            caps.append(lim["tpm"] * 60 * 24 / per_call)
+        days = r["todo"] / min(caps) if caps else 0.0
+        say(f"{r['model']:22} {r['planned']:7} {r['done']:6} {r['todo']:6} {per_call:9.0f} {days:6.2f} "
+            f"{r['spent']:8.3f} {r['usd_left']:8.3f}  {r['basis']}")
+    other = sum(v for k, v in spent.items() if k not in {r["model"] for r in rows})
+    total_spent = sum(spent.values())
+    total = total_spent + sum(r["usd_left"] for r in rows)
+    say("-" * (len(header) + 12))
+    say(f"{'TOTAL':22} {sum(r['planned'] for r in rows):7} {sum(r['done'] for r in rows):6} "
+        f"{sum(r['todo'] for r in rows):6} {'':9} {'':6} {total_spent:8.3f} {total - total_spent:8.3f}")
+    say(f"Projected total spend ${total:.2f} (already spent ${total_spent:.3f}"
+        f"{f', of which ${other:.3f} on models not in this run' if other else ''}); hard stop ${cap:.2f}."
+        if cap is not None else f"Projected total spend ${total:.2f}.")
+    say("~tok/call = prompt (chars/3.6, scaled by measured usage when available) + output. "
+        "Parse retries add calls.")
+    return total
+
+
 # ---------------------------------------------------------------- progress
 
 class Progress:
@@ -241,15 +393,16 @@ class Progress:
         self.lock = threading.Lock()
         self.rows: dict[str, dict] = {}
 
-    def init(self, name, total, done, ok, failed):
+    def init(self, name, total, done, ok, failed, usd=0.0):
         with self.lock:
-            self.rows[name] = dict(total=total, done=done, ok=ok, failed=failed, this_run=0,
+            self.rows[name] = dict(total=total, done=done, ok=ok, failed=failed, this_run=0, usd=usd,
                                    started=time.time(), state="starting")
 
-    def bump(self, name, status, cell_done):
+    def bump(self, name, status, cell_done, cost=0.0):
         with self.lock:
             r = self.rows[name]
             r["this_run"] += 1
+            r["usd"] += cost
             if cell_done:
                 r["done"] += 1
                 r["ok" if status == "ok" else "failed"] += 1
@@ -263,9 +416,10 @@ class Progress:
             lines = [f"[{dt.datetime.now():%H:%M:%S}] progress"]
             for name, r in self.rows.items():
                 mins = max((time.time() - r["started"]) / 60, 1e-9)
-                lines.append(f"  {name:24} {r['done']:4}/{r['total']:<4} done (ok {r['ok']}, parse_failed {r['failed']}), "
-                             f"{r['total'] - r['done']} left | this run {r['this_run']} calls, "
+                lines.append(f"  {name:22} {r['done']:4}/{r['total']:<4} done (ok {r['ok']}, parse_failed {r['failed']}), "
+                             f"{r['total'] - r['done']} left | ${r['usd']:.3f} | this run {r['this_run']} calls, "
                              f"{r['this_run'] / mins:.1f}/min | {r['state']}")
+            lines.append(f"  total spend on disk ${sum(r['usd'] for r in self.rows.values()):.3f}")
             return "\n".join(lines)
 
 
@@ -306,7 +460,7 @@ class Pacer:
 
 class Worker(threading.Thread):
     def __init__(self, *, name, cfg, ctx, claims_by_id, cells, plan_id, out_dir, logs_dir, api_key,
-                 limit, progress, stop, run_id, commit, records):
+                 limit, progress, stop, provider_stop, budget, run_id, commit, records):
         super().__init__(name=f"worker-{name}", daemon=True)
         self.model, self.cfg, self.ctx = name, cfg, ctx
         self.m = cfg["models"][name]
@@ -315,10 +469,12 @@ class Worker(threading.Thread):
         self.raw_path = Path(out_dir) / f"{name}.jsonl"
         self.events_path = Path(logs_dir) / f"{name}.events.jsonl"
         self.api_key, self.limit = api_key, limit
-        self.progress, self.stop, self.run_id, self.commit = progress, stop, run_id, commit
+        self.progress, self.stop, self.provider_stop, self.budget = progress, stop, provider_stop, budget
+        self.run_id, self.commit = run_id, commit
         lim = self.m.get("limits") or {}
         self.rpd, self.tpd = lim.get("rpd"), lim.get("tpd")
         self.pacer = Pacer(lim.get("rpm"), lim.get("tpm"), stop)
+        self.prices = unit_prices(self.m)
         self.temperature = setting(cfg, name, "temperature")
         self.max_out = setting(cfg, name, "max_output_tokens")
         self.expected_out = setting(cfg, name, "expected_output_tokens")
@@ -330,6 +486,7 @@ class Worker(threading.Thread):
         self.calls_today = len(today)
         self.tokens_today = sum((self.provider.total_tokens(r.get("usage") or {}) or 0) for r in today)
         self.calls_this_run = 0
+        self.last_cost = 0.0
 
     # -- logging
 
@@ -348,6 +505,15 @@ class Worker(threading.Thread):
         self.progress.state(self.model, f"STOPPED for today: {reason}; {msg}")
         say(f"[{self.model}] daily limit reached ({reason}). Stopping this model; {msg}.")
         raise Stop(reason)
+
+    def stop_for_budget(self, cell):
+        cap, total = self.budget.cap, self.budget.total()
+        if self.budget.announce_once():
+            say(f"BUDGET HARD STOP: ${total:.4f} spent of the ${cap:.2f} cap (models.yaml budget.hard_stop_usd); "
+                "the next call could pass it. Stopping every paid model. Completed cells are kept.")
+        self.event("budget_stop", cell, spent_usd=round(total, 6), cap_usd=cap)
+        self.progress.state(self.model, f"STOPPED: budget cap ${cap:.2f} reached (spent ${total:.4f})")
+        raise Stop("budget")
 
     # -- main loop
 
@@ -375,18 +541,19 @@ class Worker(threading.Thread):
         run_date = dt.date.today()
         messages = B.build_messages(self.ctx, claim, cell.condition, cell.interpreter, run_date)
         phash = B.prompt_hash(messages)
-        est = estimate_tokens(messages) + self.expected_out
+        est_in = estimate_tokens(messages)
         for attempt in (1, 2):
             seed = call_seed(self.base_seed, cell, attempt)
             payload = self.provider.build_payload(self.m, messages, temperature=self.temperature, seed=seed,
                                                   max_output_tokens=self.max_out, schema=SCHEMA)
             started = utcnow()
-            res = self.send(cell, payload, est)
+            res = self.send(cell, payload, est_in)
             if res is None:
                 return  # transient failures; the cell stays undone for the next run
             comp = self.provider.extract(res.body)
             parsed, err = parse_response(comp.text)
             status = "ok" if parsed else ("parse_retry" if attempt == 1 else "parse_failed")
+            tin, tout, cost = usage_cost(self.m, comp.usage)
             append_jsonl(self.raw_path, {
                 "schema": 1, "run_id": self.run_id, "git_commit": self.commit,
                 "timestamp_utc": started.isoformat(), "pacific_date": to_pacific(started).date().isoformat(),
@@ -395,26 +562,33 @@ class Worker(threading.Thread):
                 "truth_value": claim["truth_value"], "condition": cell.condition,
                 "interpreter": cell.interpreter, "rep": cell.rep, "attempt": attempt,
                 "plan": self.plan_id, "order_index": index, "run_date": run_date.isoformat(),
-                "prompt_hash": phash, "seed": seed, "temperature": self.temperature,
+                "prompt_hash": phash, "prompt_tokens_est": est_in, "seed": seed, "temperature": self.temperature,
                 "max_output_tokens": self.max_out, "reasoning_setting": self.provider.reasoning_setting(self.m),
                 "request": {"endpoint": self.provider.endpoint(self.m), "body": payload},
                 "http_status": res.status, "latency_s": round(res.latency_s, 3),
                 "rate_headers": {h: res.headers[h] for h in self.provider.RATE_HEADERS if h in res.headers},
                 "raw_text": comp.text, "reasoning_text": comp.reasoning, "finish_reason": comp.finish_reason,
-                "usage": comp.usage, "response_meta": comp.extra, "response_body": res.body,
+                "usage": comp.usage, "input_tokens": tin, "output_tokens": tout, "cost_usd": round(cost, 8),
+                "response_meta": comp.extra, "response_body": res.body,
                 "parsed": parsed, "parse_error": err, "status": status,
             })
             cell_done = status in DONE_STATUSES
-            self.progress.bump(self.model, status, cell_done)
+            self.progress.bump(self.model, status, cell_done, cost)
             if cell_done:
                 self.done.add(cell.key())
                 return
 
-    def send(self, cell, payload, est):
+    def send(self, cell, payload, est_in):
+        est = est_in + self.expected_out
+        pin, pout = self.prices
+        worst = est_in * INPUT_MARGIN * pin + self.max_out * pout
         transient = unclassified = 0
         while True:
             if self.stop.is_set():
                 raise Stop("interrupted")
+            if self.provider_stop.is_set():
+                self.progress.state(self.model, f"STOPPED: {self.provider.NAME} blocked API access (see message above)")
+                raise Stop("provider blocked")
             today = to_pacific(utcnow()).date()
             if today != self.day:
                 self.day, self.calls_today, self.tokens_today = today, 0, 0
@@ -423,14 +597,20 @@ class Worker(threading.Thread):
             if self.tpd and self.tokens_today + est > self.tpd:
                 self.stop_for_day(f"~{self.tokens_today} tokens today; the next call would pass the configured TPD {self.tpd}", cell)
             self.pacer.wait(est)
+            if not self.budget.reserve(worst):
+                self.stop_for_budget(cell)
             res = self.provider.send(self.m, payload, self.api_key, self.timeout)
             self.calls_this_run += 1
             if res.status == 200 and isinstance(res.body, dict):
-                used = self.provider.total_tokens(self.provider.extract(res.body).usage) or est
+                usage = self.provider.extract(res.body).usage
+                used = self.provider.total_tokens(usage) or est
+                self.last_cost = usage_cost(self.m, usage)[2]
+                self.budget.settle(self.model, worst, self.last_cost)
                 self.pacer.record(used)
                 self.calls_today += 1
                 self.tokens_today += used
                 return res
+            self.budget.settle(self.model, worst, 0.0)
             if res.status == 429:
                 rl = self.provider.classify_429(res)
                 self.event("http_429", cell, scope=rl.scope, wait_s=rl.wait_s, detail=rl.detail,
@@ -446,14 +626,24 @@ class Worker(threading.Thread):
                 self.progress.state(self.model, f"waiting {wait:.0f}s (per-minute limit)")
                 SLEEP(self.stop, wait)
                 continue
-            if res.status is None or res.status in (408, 409) or res.status >= 500 or res.status == 200:
+            if res.status == 400 and "blocked_api_access" in (res.text or ""):
+                self.provider_stop.set()
+                self.event("blocked_api_access", cell, status=res.status, body=res.text[:2000])
+                say(f"[{self.model}] HTTP 400 blocked_api_access: {self.provider.NAME} has blocked API access for "
+                    f"this key's organisation. Stopping ALL {self.provider.NAME} models. Check the account "
+                    "(console.groq.com for Groq: billing, spend limit, account status), then re-run the same "
+                    "command; completed cells are kept.")
+                self.progress.state(self.model, f"STOPPED: {self.provider.NAME} blocked_api_access")
+                raise Stop("blocked_api_access")
+            if (res.status is None or res.status in TRANSIENT_STATUSES or res.status >= 500
+                    or res.status == 200):
                 transient += 1
                 self.event("transient_error", cell, status=res.status, error=res.error, body=res.text[:500],
                            attempt=transient)
                 if transient > MAX_TRANSIENT_RETRIES:
                     self.progress.state(self.model, "skipping a cell after repeated transient errors")
                     return None
-                SLEEP(self.stop, min(120.0, 5.0 * 2 ** transient) + random.uniform(0, 2))
+                SLEEP(self.stop, min(120.0, 5.0 * 2 ** transient) + random.uniform(0, 3))
                 continue
             # any other 4xx is a request or configuration problem: stop this model, keep the evidence
             self.event("fatal_http_error", cell, status=res.status, body=res.text[:2000])
@@ -465,47 +655,9 @@ class Worker(threading.Thread):
 # ---------------------------------------------------------------- commands
 
 def dry_run(cfg, plans, ctx, claims_by_id, out_dir) -> int:
-    say("DRY RUN: builds every prompt; makes no API calls and writes nothing.\n")
-    today = dt.date.today()
-    header = (f"{'model':24} {'planned':>7} {'on disk':>7} {'to run':>6} {'~tok/call':>9} "
-              f"{'~tokens left':>12} {'limits (rpm/rpd/tpm/tpd)':>26} {'~days':>6}")
-    say(header)
-    say("-" * len(header))
-    totals = [0, 0, 0]
-    for name, (cells, _seed) in plans.items():
-        m = cfg["models"][name]
-        done = done_keys(read_raw(Path(out_dir) / f"{name}.jsonl"))
-        todo = [c for c in cells if c.key() not in done]
-        expected_out = setting(cfg, name, "expected_output_tokens")
-        hashes = set()
-        est = []
-        for c in cells:  # build every prompt, not only the remaining ones
-            msgs = B.build_messages(ctx, claims_by_id[c.claim_id], c.condition, c.interpreter, today)
-            hashes.add(B.prompt_hash(msgs))
-            if c.key() not in done:
-                est.append(estimate_tokens(msgs) + expected_out)
-        per_call = sum(est) / len(est) if est else 0
-        lim = m.get("limits") or {}
-        caps = [lim[k] for k in ("rpd",) if lim.get(k)]
-        if lim.get("tpd") and per_call:
-            caps.append(lim["tpd"] / per_call)
-        if lim.get("rpm"):
-            caps.append(lim["rpm"] * 60 * 24)
-        if lim.get("tpm") and per_call:
-            caps.append(lim["tpm"] * 60 * 24 / per_call)
-        per_day = min(caps) if caps else float("inf")
-        days = len(todo) / per_day if per_day else float("inf")
-        limits = "/".join(str(lim.get(k, "-")) for k in ("rpm", "rpd", "tpm", "tpd"))
-        say(f"{name:24} {len(cells):7} {len(cells) - len(todo):7} {len(todo):6} {per_call:9.0f} "
-            f"{sum(est):12.0f} {limits:>26} {days:6.1f}")
-        say(f"{'':24} {len(hashes)} distinct prompts (reps share a prompt)")
-        totals[0] += len(cells)
-        totals[1] += len(cells) - len(todo)
-        totals[2] += len(todo)
-    say("-" * len(header))
-    say(f"{'TOTAL':24} {totals[0]:7} {totals[1]:7} {totals[2]:6}")
-    say("\n~days = calls left / the tightest daily cap implied by the configured limits, at the estimated "
-        f"tokens per call (prompt chars / {CHARS_PER_TOKEN} + expected output). Parse retries add calls.")
+    say("DRY RUN: builds every prompt and projects cost; makes no API calls and writes nothing.\n")
+    rows, spent = projection(cfg, plans, ctx, claims_by_id, out_dir, unique_dirs(out_dir, *SPEND_DIRS))
+    print_projection(cfg, rows, spent)
     return 0
 
 
@@ -529,16 +681,24 @@ def check_models(cfg, names) -> int:
     return status
 
 
-def live(cfg, plans, ctx, claims_by_id, args) -> int:
+def confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def start_workers(cfg, plans, ctx, claims_by_id, out_dir, logs_dir, limit, progress, stop) -> list[Worker]:
     load_env(REPO / ".env")
-    out_dir, logs_dir = Path(args.out_dir), Path(args.logs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     run_id, commit = uuid.uuid4().hex[:12], git_commit()
-    progress, stop = Progress(), threading.Event()
+    budget = Budget(cfg["budget"].get("hard_stop_usd"), spend_on_disk(cfg, unique_dirs(out_dir, *SPEND_DIRS)))
+    provider_stops = {p: threading.Event() for p in PROVIDERS}
     workers = []
     for name, (cells, order_seed) in plans.items():
-        prov = PROVIDERS[cfg["models"][name]["provider"]]
+        m = cfg["models"][name]
+        prov = PROVIDERS[m["provider"]]
         key = os.environ.get(prov.KEY_ENV)
         if not key:
             say(f"[{name}] {prov.KEY_ENV} is not set; skipping this model.")
@@ -554,51 +714,80 @@ def live(cfg, plans, ctx, claims_by_id, args) -> int:
         mine = [r for r in records if r.get("status") in DONE_STATUSES
                 and (r["model"], r["claim_id"], r["condition"], r["interpreter"], r["rep"]) in planned]
         progress.init(name, len(cells), len(planned & done_keys(records)),
-                      sum(r["status"] == "ok" for r in mine), sum(r["status"] == "parse_failed" for r in mine))
+                      sum(r["status"] == "ok" for r in mine), sum(r["status"] == "parse_failed" for r in mine),
+                      usd=sum(usage_cost(m, r.get("usage") or {})[2] for r in records))
         workers.append(Worker(name=name, cfg=cfg, ctx=ctx, claims_by_id=claims_by_id, cells=cells, plan_id=pid,
-                              out_dir=out_dir, logs_dir=logs_dir, api_key=key, limit=args.limit,
-                              progress=progress, stop=stop, run_id=run_id, commit=commit, records=records))
-    if not workers:
-        say("No model has an API key; nothing to do.")
-        return 1
-    append_jsonl(logs_dir / "runs.jsonl", {"run_id": run_id, "started_utc": utcnow().isoformat(), "git_commit": commit,
-                                           "models": [w.model for w in workers], "argv": sys.argv[1:]})
-    say(f"run {run_id} at {commit}: {', '.join(w.model for w in workers)}. Ctrl+C stops cleanly.")
-    for w in workers:
-        w.start()
+                              out_dir=out_dir, logs_dir=logs_dir, api_key=key, limit=limit,
+                              progress=progress, stop=stop, provider_stop=provider_stops[m["provider"]],
+                              budget=budget, run_id=run_id, commit=commit, records=records))
+    if workers:
+        append_jsonl(logs_dir / "runs.jsonl", {"run_id": run_id, "started_utc": utcnow().isoformat(),
+                                               "git_commit": commit, "models": [w.model for w in workers],
+                                               "argv": sys.argv[1:]})
+        say(f"run {run_id} at {commit}: {', '.join(w.model for w in workers)}. Ctrl+C stops cleanly.")
+        for w in workers:
+            w.start()
+    return workers
+
+
+def wait_for(workers, progress, stop, progress_every, grace) -> None:
     try:
         last = time.time()
         while any(w.is_alive() for w in workers):
             next(w for w in workers if w.is_alive()).join(timeout=0.5)
-            if time.time() - last >= args.progress_every:
+            if time.time() - last >= progress_every:
                 say(progress.render())
                 last = time.time()
     except KeyboardInterrupt:
         say("Interrupted: finishing the calls in flight, then stopping.")
         stop.set()
         for w in workers:
-            w.join(timeout=args.request_grace)
+            w.join(timeout=grace)
     say(progress.render())
+
+
+def live(cfg, plans, ctx, claims_by_id, args) -> int:
+    out_dir, logs_dir = Path(args.out_dir), Path(args.logs_dir)
+    rows, spent = projection(cfg, plans, ctx, claims_by_id, out_dir, unique_dirs(out_dir, *SPEND_DIRS))
+    total = print_projection(cfg, rows, spent)
+    cap = cfg["budget"].get("hard_stop_usd")
+    if cap is not None and total > cap:
+        say(f"WARNING: the projection (${total:.2f}) is above the hard stop (${cap:.2f}); "
+            "the run will stop when spend reaches it.")
+    if not args.yes and not confirm(f"Start the run? Projected total spend ${total:.2f}. [y/N] "):
+        say("Not started; nothing was sent.")
+        return 1
+    progress, stop = Progress(), threading.Event()
+    workers = start_workers(cfg, plans, ctx, claims_by_id, out_dir, logs_dir, args.limit, progress, stop)
+    if not workers:
+        say("No model has an API key; nothing to do.")
+        return 1
+    wait_for(workers, progress, stop, args.progress_every, args.request_grace)
     return 0
 
 
-def main(argv=None) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config", type=Path, default=REPO / "models.yaml")
     ap.add_argument("--models", default="all", help="comma-separated model names from the config, or 'all'")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--check-models", action="store_true")
+    ap.add_argument("--yes", action="store_true", help="skip the projected-cost question before the main run")
     ap.add_argument("--claims", help="comma-separated claim or pair ids")
     ap.add_argument("--conditions", help="comma-separated conditions, e.g. C0,C1")
     ap.add_argument("--reps", type=int, help="override the number of reps")
     ap.add_argument("--limit", type=int, help="max API calls per model in this run")
-    ap.add_argument("--out-dir", default=str(REPO / "data" / "raw"))
-    ap.add_argument("--logs-dir", default=str(REPO / "data" / "logs"))
+    ap.add_argument("--out-dir", default=str(DATA / "raw"))
+    ap.add_argument("--logs-dir", default=str(DATA / "logs"))
     ap.add_argument("--progress-every", type=float, default=30.0, help="seconds between progress prints")
     ap.add_argument("--request-grace", type=float, default=150.0, help="seconds to wait for calls in flight on Ctrl+C")
-    args = ap.parse_args(argv)
+    return ap
 
+
+def main(argv=None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    ap = build_parser()
+    args = ap.parse_args(argv)
     cfg = load_config(args.config)
     names = list(cfg["models"]) if args.models == "all" else [n.strip() for n in args.models.split(",")]
     unknown = [n for n in names if n not in cfg["models"]]

@@ -22,8 +22,9 @@ def build_payload(cfg: dict, messages: list[dict], *, temperature, seed, max_out
     if seed is not None:
         gc["seed"] = seed
     gc["maxOutputTokens"] = max_output_tokens
-    gc["responseMimeType"] = "application/json"
-    gc["responseJsonSchema"] = schema
+    if schema is not None:  # None: plain text (the Gemma judge; JSON mode is undocumented for Gemma)
+        gc["responseMimeType"] = "application/json"
+        gc["responseJsonSchema"] = schema
     gc.update(cfg.get("generation_config") or {})  # thinkingConfig
     return {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents, "generationConfig": gc}
 
@@ -56,6 +57,12 @@ def extract(body: dict) -> Completion:
 
 def total_tokens(usage: dict) -> int | None:
     return usage.get("totalTokenCount")
+
+
+def token_split(usage: dict) -> tuple[int, int]:
+    """(input tokens, output tokens); output includes thinking tokens, which are billed as output."""
+    return (int(usage.get("promptTokenCount") or 0),
+            int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0))
 
 
 def classify_429(res: HttpResult) -> RateLimit:

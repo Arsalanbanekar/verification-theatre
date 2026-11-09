@@ -53,6 +53,11 @@ def total_tokens(usage: dict) -> int | None:
     return usage.get("total_tokens")
 
 
+def token_split(usage: dict) -> tuple[int, int]:
+    """(billed input tokens, billed output tokens); output includes reasoning tokens."""
+    return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+
+
 def classify_429(res: HttpResult) -> RateLimit:
     """Groq does not document how to tell limits apart; its error messages name the limit
     ("... on tokens per minute (TPM) ...", "... requests per day (RPD) ..."), which is used
