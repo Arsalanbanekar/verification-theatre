@@ -766,8 +766,145 @@ def live(cfg, plans, ctx, claims_by_id, args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- pilot
+
+PILOT_CLAIM = "real-01-t"
+PILOT_CONDITIONS = ("C0", "C1", "C2", "C5")
+PILOT_JUDGE_CALLS = 10
+PILOT_JUDGE_PASS = 9
+
+
+def pilot_cells(cfg: dict, name: str) -> list[Cell]:
+    """C0, C1, C2, C5, plus C2 with the interpreter (interpreter-arm models) or C4 (the rest)."""
+    extra = ("C2", True) if cfg["models"][name].get("interpreter_arm") else ("C4", False)
+    return [Cell(name, PILOT_CLAIM, c, i, 0) for c, i in [(c, False) for c in PILOT_CONDITIONS] + [extra]]
+
+
+def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path):
+    """Judge PILOT_JUDGE_CALLS pilot responses from C1-C4, round-robin over models. Each response is
+    judged once; re-running reuses earlier judgements rather than asking again."""
+    from src.judge import JudgeClient, JudgeStop, credential_facts, response_id
+    jcfg = cfg.get("judge")
+    if not jcfg:
+        return [], "skipped: no judge section in models.yaml"
+    queues = []
+    for name in names:
+        recs = [r for r in read_raw(pilot_dir / f"{name}.jsonl")
+                if r.get("status") == "ok" and r["condition"] in ("C1", "C2", "C3", "C4")]
+        queues.append(sorted(recs, key=lambda r: (r["condition"], r["interpreter"])))
+    cands = []
+    while len(cands) < PILOT_JUDGE_CALLS and any(queues):
+        for q in queues:
+            if q and len(cands) < PILOT_JUDGE_CALLS:
+                cands.append(q.pop(0))
+    jpath = pilot_dir / "judge.jsonl"
+    earlier = {r["response_id"]: r for r in read_raw(jpath)}
+    load_env(REPO / ".env")
+    key = os.environ.get(PROVIDERS[jcfg["provider"]].KEY_ENV)
+    if not key and any(response_id(r) not in earlier for r in cands):
+        return [earlier[response_id(r)] for r in cands if response_id(r) in earlier], \
+            f"stopped: {PROVIDERS[jcfg['provider']].KEY_ENV} not set"
+    client = JudgeClient(jcfg, key or "", sleep=lambda s: SLEEP(threading.Event(), s))
+    rows, status = [], "done"
+    for rec in cands:
+        rid = response_id(rec)
+        if rid in earlier:
+            rows.append(earlier[rid])
+            continue
+        claim = claims_by_id[rec["claim_id"]]
+        try:
+            j = client.judge(credential_facts(ctx, claim, rec["condition"]), claim["text"],
+                             rec["parsed"]["justification"], seed=_int_seed(jcfg.get("seed", 0), rid))
+        except JudgeStop as e:
+            status = f"stopped: {e}"
+            break
+        row = {"response_id": rid, "timestamp_utc": utcnow().isoformat(), "judge_model_id": jcfg["model_id"],
+               "model": rec["model"], "claim_id": rec["claim_id"], "condition": rec["condition"],
+               "interpreter": rec["interpreter"], "rep": rec["rep"], **j}
+        append_jsonl(jpath, row)
+        rows.append(row)
+    return rows, status
+
+
+def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, judge_status) -> tuple[str, dict]:
+    warn_at = cfg["budget"].get("pilot_warn_usd")
+    lines = ["# Pilot report", "", f"Generated {utcnow():%Y-%m-%d %H:%M} UTC. Pilot data lives in `{pilot_dir}` "
+             "and is excluded from analysis.", "", "## Study calls", "",
+             "| model | condition | interpreter | attempt | status | result | in tok | out tok | $ | s |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
+    pilot_spend = 0.0
+    n_calls = 0
+    for name in names:
+        m = cfg["models"][name]
+        for r in read_raw(pilot_dir / f"{name}.jsonl"):
+            tin, tout, cost = usage_cost(m, r.get("usage") or {})
+            pilot_spend += cost
+            n_calls += 1
+            p = r.get("parsed")
+            result = f"accept={p['accept']} conf={p['confidence']}" if p else f"PARSE FAIL: {(r.get('parse_error') or '')[:40]}"
+            lines.append(f"| {name} | {r['condition']} | {'yes' if r['interpreter'] else 'no'} | {r['attempt']} | "
+                         f"{r['status']} | {result} | {tin} | {tout} | {cost:.5f} | {r.get('latency_s', 0):.1f} |")
+    lines += ["", f"{n_calls} study responses; pilot spend ${pilot_spend:.4f}.", ""]
+
+    valid = sum(1 for j in judge_rows if j.get("valid"))
+    passed = len(judge_rows) >= PILOT_JUDGE_CALLS and valid >= PILOT_JUDGE_PASS
+    lines += ["## Judge", "",
+              f"{cfg.get('judge', {}).get('model_id', '-')}: {valid}/{len(judge_rows)} calls returned a valid score "
+              f"(pass rule: at least {PILOT_JUDGE_PASS}/{PILOT_JUDGE_CALLS}). **{'PASS' if passed else 'FAIL'}**. "
+              f"Status: {judge_status}.", ""]
+    if not passed:
+        lines += ["Per PREREGISTRATION.md §5, scope accuracy must then come from the author's hand-labels on 150 "
+                  "stratified responses: `python src/grade.py --human-sample 150`.", ""]
+    lines += ["| response | score | valid | reason or error |", "|---|---|---|---|"]
+    for j in judge_rows:
+        why = (j.get("reason") or j.get("parse_error") or "").replace("|", "/")[:80]
+        lines.append(f"| {j['response_id']} | {j.get('score')} | {j.get('valid')} | {why} |")
+
+    claims = list(claims_by_id.values())
+    plans_full = {n: order_cells(plan_cells(cfg, n, claims), cfg["defaults"]["base_seed"], n) for n in names}
+    rows, spent = projection(cfg, plans_full, ctx, claims_by_id, SPEND_DIRS[0], unique_dirs(*SPEND_DIRS, pilot_dir))
+    total = sum(spent.values()) + sum(r["usd_left"] for r in rows)
+    lines += ["", "## Projected full run (calibrated on the pilot's measured tokens)", "",
+              "| model | calls left | input tok/call | output tok/call | projected $ |", "|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['model']} | {r['todo']} | {r['in_per_call']:.0f} | {r['out_per_call']:.0f} | {r['usd_left']:.3f} |")
+    lines += ["", f"Projected total including spend so far: **${total:.2f}** "
+              f"(hard stop ${cfg['budget'].get('hard_stop_usd', 0):.2f})."]
+    over = warn_at is not None and total > warn_at
+    if over:
+        lines += ["", f"**WARNING: projected total ${total:.2f} is above ${warn_at:.2f}.** "
+                  "Apply the CLAUDE.md cut order or reduce qwen's share before the main run."]
+    summary = {"generated_utc": utcnow().isoformat(), "study_responses": n_calls, "pilot_spend_usd": round(pilot_spend, 6),
+               "judge_model_id": cfg.get("judge", {}).get("model_id"), "judge_calls": len(judge_rows),
+               "judge_valid": valid, "judge_passed": passed, "judge_status": judge_status,
+               "projected_total_usd": round(total, 4), "projection_over_warning": over,
+               "projection": [{k: r[k] for k in ("model", "todo", "in_per_call", "out_per_call", "usd_left")} for r in rows]}
+    return "\n".join(lines) + "\n", summary
+
+
+def run_pilot(cfg, names, ctx, claims_by_id, args) -> int:
+    pilot_dir, logs_dir = Path(args.out_dir), Path(args.logs_dir)
+    plans = {n: (pilot_cells(cfg, n), 0) for n in names}
+    say(f"PILOT: {sum(len(c) for c, _ in plans.values())} study calls on {PILOT_CLAIM}, then up to "
+        f"{PILOT_JUDGE_CALLS} judge calls. Output: {pilot_dir}")
+    progress, stop = Progress(), threading.Event()
+    workers = start_workers(cfg, plans, ctx, claims_by_id, pilot_dir, logs_dir, None, progress, stop)
+    if workers:
+        wait_for(workers, progress, stop, args.progress_every, args.request_grace)
+    judge_rows, judge_status = pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir)
+    report, summary = pilot_report(cfg, names, ctx, claims_by_id, pilot_dir, judge_rows, judge_status)
+    pilot_dir.mkdir(parents=True, exist_ok=True)
+    (pilot_dir / "pilot_report.md").write_text(report, encoding="utf-8", newline="\n")
+    (pilot_dir / "pilot_report.json").write_text(json.dumps(summary, indent=1), encoding="utf-8", newline="\n")
+    say("\n" + report)
+    say(f"Saved {pilot_dir / 'pilot_report.md'} and pilot_report.json.")
+    return 0
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--pilot", action="store_true",
+                    help="5 calls per model on real-01-t, then 10 judge calls; output to data/pilot")
     ap.add_argument("--config", type=Path, default=REPO / "models.yaml")
     ap.add_argument("--models", default="all", help="comma-separated model names from the config, or 'all'")
     ap.add_argument("--dry-run", action="store_true")
@@ -777,8 +914,8 @@ def build_parser():
     ap.add_argument("--conditions", help="comma-separated conditions, e.g. C0,C1")
     ap.add_argument("--reps", type=int, help="override the number of reps")
     ap.add_argument("--limit", type=int, help="max API calls per model in this run")
-    ap.add_argument("--out-dir", default=str(DATA / "raw"))
-    ap.add_argument("--logs-dir", default=str(DATA / "logs"))
+    ap.add_argument("--out-dir", default=None, help="default data/raw (data/pilot with --pilot)")
+    ap.add_argument("--logs-dir", default=None, help="default data/logs (data/pilot/logs with --pilot)")
     ap.add_argument("--progress-every", type=float, default=30.0, help="seconds between progress prints")
     ap.add_argument("--request-grace", type=float, default=150.0, help="seconds to wait for calls in flight on Ctrl+C")
     return ap
@@ -788,6 +925,10 @@ def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = build_parser()
     args = ap.parse_args(argv)
+    if args.out_dir is None:
+        args.out_dir = str(SPEND_DIRS[1] if args.pilot else SPEND_DIRS[0])
+    if args.logs_dir is None:
+        args.logs_dir = str(Path(args.out_dir) / "logs" if args.pilot else DATA / "logs")
     cfg = load_config(args.config)
     names = list(cfg["models"]) if args.models == "all" else [n.strip() for n in args.models.split(",")]
     unknown = [n for n in names if n not in cfg["models"]]
@@ -798,6 +939,8 @@ def main(argv=None) -> int:
 
     ctx, claims = B.load_context(), B.load_claims()
     claims_by_id = {c["id"]: c for c in claims}
+    if args.pilot:
+        return run_pilot(cfg, names, ctx, claims_by_id, args)
     claim_filter = set(args.claims.split(",")) if args.claims else None
     cond_filter = set(args.conditions.split(",")) if args.conditions else None
     plans = {}
