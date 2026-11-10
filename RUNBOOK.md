@@ -161,7 +161,7 @@ gemini-3.5-flash-lite.
 | 3 | Groq: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b | `python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b` | 30–90 min |
 | 4 | Gemini, up to its daily quota | `python src/runner.py --models gemini-3.5-flash-lite` | ~40 min, then it stops for the day |
 | 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
-| 6 | Grade and judge, once all four models are done | `python src/grade.py --judge` | ~45 min |
+| 6 | Grade and judge, once all four models are done | `python src/grade.py --judge` | 30–40 min |
 | 7 | Hand-label 30 (or 150 on the fallback path) | section 10 | 45 min (150: 3–4 h) |
 | 8 | Analysis | `python src/analyse.py` | 1 min |
 | 9 | Write up, check, submit | sections 13–14 | |
@@ -269,7 +269,7 @@ judge sample 600; already judged 0; to judge 600
   ...
   judged 600/600
 ```
-This takes about 45 minutes, paced to stay under the judge's limits. If it stops early, re-run
+This takes 30–40 minutes, paced to stay under the judge's limits (30 RPM, 16,000 TPM). If it stops early, re-run
 the same command; judged items are kept and the sample is fixed once drawn. Then go to section
 10a.
 
@@ -410,7 +410,7 @@ git commit -m "Analysis results"
 |---|---|---|
 | `The judge FAILED the pilot ...` | The pre-registered pass rule failed | Fallback path (sections 9–10b) |
 | `Note: no pilot report found` | `data/pilot/pilot_report.json` is missing | Run the pilot first, or note it in `DEVIATIONS.md` |
-| `Judge RPD 1000 reached; resume after ...` | The configured daily cap | Re-run after the printed time |
+| `Judge RPD 14400 reached; resume after ...` | The configured daily cap (far above the 600 needed) | Re-run after the printed time |
 | `Judge stopped: judge daily quota exhausted` | Google's daily quota for Gemma | Re-run after 13:30 IST; judged items are kept |
 | `Judge stopped: judge failing repeatedly: HTTP 5xx` | Provider trouble | Wait 10–30 minutes, re-run |
 | `Judge stopped: judge request rejected: HTTP 4xx` | Key or model id problem | Check `GEMINI_API_KEY`; the judge model is `gemma-4-31b-it` in `models.yaml` |

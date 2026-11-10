@@ -41,8 +41,9 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
 - Budget: the $4.50 hard stop counts measured spend in `data/raw` and `data/pilot`. The dry run
   projects $3.23 on the estimate basis, about 80% of it qwen; the pilot replaces the estimate with
   measured tokens.
-- Judge: `gemma-4-31b-it`, replying in plain text (JSON mode is undocumented for Gemma). Pass
-  rule: 9 of 10 valid scores in the pilot. If it fails, the scores come from 150 hand-labels.
+- Judge: `gemma-4-31b-it`, replying in plain text (JSON mode is undocumented for Gemma), paced
+  at 30 RPM, 16K TPM and 14,400 RPD. Pass rule: 9 of 10 valid scores in the pilot; if it fails,
+  scope accuracy comes from 150 hand-labels.
 - Analysis (prereg §7, rev 3.3): paired t-tests over pairs and Holm over the eight primary tests,
   with the permutation test as a robustness check. H3 needs the 95% CI's upper bound for score 2
   below 0.5 and p_holm < .05.
@@ -54,10 +55,8 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
    README and the report must disclose the collection dates.
 3. **Power.** There are 10 real-obscure pairs and Holm runs over 8 tests, so only clear effects
    reach significance. Elsewhere the CIs carry the result, and the generated text says so.
-4. **qwen/qwen3.8-27b is a preview model.** Run `--check-models` just before the sprint.
-5. **Gemma judge limits are undocumented.** `models.yaml` paces it conservatively (15 RPM,
-   15K TPM, 1,000 RPD).
-6. **`REPORT_DRAFT.md`** still names rev 3.1 and the dropped Gemini models.
+4. **qwen/qwen3.8-27b is a preview model.** Run `--check-models` just before the main run.
+5. **`REPORT_DRAFT.md`** still names rev 3.1 and the dropped Gemini models.
    `results_summary.md` lists every line to update.
 
 ## File map

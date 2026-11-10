@@ -66,9 +66,8 @@ models:
 judge:
   provider: gemini
   model_id: gemma-4-31b-it                 # "The Gemini API supports the following Gemma 4 models"
-  # Gemma free-tier limits are not documented (only on AI Studio's live rate-limit page).
-  # These conservative values pace the judge; raise them if AI Studio shows more.
-  limits: {rpm: 15, rpd: 1000, tpm: 15000}
+  # AI Studio limits for gemma-4-31b, as given by the author on 10 Nov 2026 (not in the public docs).
+  limits: {rpm: 30, rpd: 14400, tpm: 16000}
   price_usd_per_mtok: {input: 0.0, output: 0.0}
   temperature: 0.0
   max_output_tokens: 400
