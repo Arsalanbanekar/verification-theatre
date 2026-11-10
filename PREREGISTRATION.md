@@ -3,7 +3,7 @@
 **Commit this file before any experimental data exists.** Changes after that point go in
 `DEVIATIONS.md`, dated, with a reason — not by editing this file.
 
-Status: pre-registered, awaiting data collection.
+Status: pre-registered. The pilot began on 10 Nov 2026; main data collection has not started.
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
 Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
@@ -11,6 +11,8 @@ H5 restated; baseline stratification corrected. Rev 3.1: wording correction in �
 Revision 3.2 (9 Nov 2026, pre-data): four models; temperature and reasoning settings stated;
 scope-accuracy judge specified. See §12.
 Revision 3.3 (10 Nov 2026, pre-data): tests and decision rules specified in §7. See §12.
+Revision 3.4 (decided 10 Nov 2026 after the pilot, committed 11 Nov 2026, before the main run):
+scope-accuracy judge replaced and cross-checked by a second judge; hand-labels removed. See §12.
 
 ---
 
@@ -219,13 +221,38 @@ Model output is strict JSON:
    share with its 95% CI, plus the share that mention the mark at all (rev 3.3; decision rule
    in §7).
 
-   **Judge.** `gemma-4-31b-it` (Gemini API) scores ~600 responses from C1–C4, stratified by
-   model, condition and claim type. It sees what the credential certified, the statement and
-   the justification; never the model, condition label or truth value. The judge is used only
-   if it passes the pilot: at least 9 of 10 pilot judge calls return a valid score. If it fails,
-   scope accuracy is instead the author's hand-labels on 150 stratified responses, blind to
-   model, condition and truth. Regardless of the pilot outcome, the author hand-labels 30
-   responses under the same blinding, and judge–author agreement (weighted kappa) is reported.
+   **Judge (rev 3.4).** A paid model on OpenRouter scores ~600 responses from C1–C4, stratified
+   by model, condition and claim type. It sees what the credential certified, the statement and
+   the justification; never the model, condition label or truth value. It is chosen before any
+   main-data judging, by these criteria:
+   - not from OpenAI (including gpt-oss), Qwen/Alibaba or Google, the developers of the study
+     models;
+   - a named production model: no `:free` variant, no unnamed ("stealth") model, no automatic
+     router;
+   - supports JSON output;
+   - the strongest reasoning model, on published benchmarks, whose cost for ~600 judgements is
+     under about $2.
+
+   Its exact model ID, serving provider and settings (temperature 0, a fixed reasoning setting)
+   are recorded in `models.yaml` and committed before judging begins. Requests are pinned to
+   that provider with no fallback, and every call logs the model and provider that served it.
+   Before main-data judging, the judge scores 10 pilot responses as a format check; pilot
+   judgements are never analysed. If fewer than 9 of the 10 return a valid score, the request is
+   corrected or the next candidate is chosen.
+
+   **Cross-check (rev 3.4).** A free OpenRouter model (a `:free` variant) from a different family
+   again scores a 100-response subset of the judge's sample, stratified the same way, with the
+   same prompt and blinding. It is subject to the same exclusions, may not share the main judge's
+   family, and its model ID and provider are recorded the same way.
+   - Agreement is the linearly weighted kappa between the two judges on the responses both
+     scored 0–2.
+   - It is reported overall and per study-model family (gpt-oss, Qwen, Gemini). Cohen's kappa over
+     all four categories and raw agreement on N/A are reported alongside.
+   - **Judge results are reported only if the overall weighted kappa is at least 0.6.** Otherwise
+     H3, the 0/1/2 distribution and the mention share are not reported; the paper gives the kappa
+     instead.
+
+   No human labels are used.
 
 **What each half of the corpus measures.**
 
@@ -311,6 +338,9 @@ pooled.
     justifications, each share with its 95% CI.
   - It is reported together with the share of justifications that mention the credential at
     all, also with its CI.
+  - (Rev 3.4.) H3 is tested only if the two judges agree (§5: overall weighted kappa at least
+    0.6). If they do not, H3 is not reported. Holm still counts eight tests: H3 enters with
+    p = 1, so the other seven are corrected at least as strictly as with H3 present.
 - **C0 ceiling.** Judged within each reporting scope: a pair is dropped from an inflation test
   if both twins were accepted in every C0 response in that scope.
 - **H5 (exploratory).** C1 − C0 on invented pairs minus the same on real-obscure pairs, with
@@ -367,10 +397,14 @@ equal prominence.
 - Evaluation awareness beyond entity recognition is unmeasured: models may behave differently
   if they infer the task is a test.
 - Open-weight and small proprietary models only; no frontier model at full design.
-- Judge-based scope accuracy, with human agreement reported but no second independent judge.
-- The judge (`gemma-4-31b-it`) and one study model (`gemini-3.5-flash-lite`) are both from
-  Google; judge–author agreement is reported per model family so that any same-family bias is
-  visible.
+- Scope accuracy rests on LLM judges, with no human labels. Agreement between two judges from
+  different families shows that the rubric is applied consistently, not that it is applied
+  correctly: both judges could share a misreading.
+- Neither judge comes from a study model's developer (OpenAI, Alibaba, Google). Agreement is
+  reported per study-model family, so any family-specific disagreement is visible.
+- The cross-check judge is a free OpenRouter model. Providers of free models may log prompts
+  and may train on them. Its prompts contain only corpus claims, credential facts and
+  study-model justifications, with no personal data.
 - Obscurity of the real claims is author judgment plus a non-study-model probe, confirmed
   post hoc by C0.
 
@@ -391,7 +425,8 @@ anything in the corpus, and no private individual is named.
 
 ## 12. Revision history
 
-All revisions precede data collection. Git history is the authoritative record.
+Revisions 1 to 3.3 precede all data collection. Rev 3.4 follows the pilot and precedes the main
+run. Git history is the authoritative record.
 
 - **Rev 1 (6 Nov 2026).** Initial design.
 - **Rev 2 (7 Nov 2026).** Twin-pair corpus; alteration rules including no attributive party
@@ -440,3 +475,20 @@ All revisions precede data collection. Git history is the authoritative record.
 
   `DEVIATIONS.md` now records only changes made after data collection began. No conditions,
   measures, models or primary comparisons changed.
+- **Rev 3.4 (11 Nov 2026).** Decided on 10 Nov after the pilot, on its evidence, and committed
+  on 11 Nov, before the main run; no main-run data existed. In the pilot, `gemma-4-31b-it` was too slow and unreliable to judge
+  ~600 responses: its 4 completed calls took 20–43 s each, and the next one kept failing with
+  server errors or time-outs until the run was stopped. Changes:
+  - §5: the judge is a paid OpenRouter model, chosen before any main-data judging by stated
+    criteria. Its model ID, serving provider and settings are recorded before judging.
+  - §5: a free OpenRouter model from a third family scores 100 of the judged responses. Judge
+    results are reported only if the overall weighted kappa between the two judges is at least
+    0.6.
+  - §5: the author's hand-labels (30 for agreement, 150 as the fallback) are removed.
+  - §7: if the kappa threshold is not met, H3 is not reported and enters the Holm family with
+    p = 1.
+  - §9: the judge limitations are restated, and the free model's data policy is noted.
+
+  The pilot's four Gemma judgements stay on disk in `data/pilot/judge.jsonl` and are excluded
+  from every analysis. No conditions, measures, study models, study prompts or primary
+  comparisons changed.
