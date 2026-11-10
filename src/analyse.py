@@ -970,9 +970,6 @@ def placeholder_entries(draft_text: str, slots: dict) -> list[dict]:
     return entries
 
 
-STALE_MODEL_SENTENCE = re.compile(r":\s*GPT-OSS-120B.*?spot check \(10 claims × C0/C1 ×\s*3\)\.", re.S)
-
-
 def filled_draft(draft_text: str, entries) -> str:
     out, pos = [], 0
     for e in entries:
@@ -980,10 +977,6 @@ def filled_draft(draft_text: str, entries) -> str:
             continue
         out.append(draft_text[pos:e["start"]])
         text, end = e["text"], e["end"]
-        if e["slot"] == "MODELS_PARAGRAPH":  # replace the stale model sentence that follows the slot too
-            m = STALE_MODEL_SENTENCE.match(draft_text, end)
-            if m:
-                end = m.end()
         if "\n|" in text:  # a table needs its own block
             text = "\n\n" + text + "\n\n"
         out.append(text)
@@ -1129,11 +1122,12 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     counts = df.groupby("model").size().to_dict()
     pf_text = ", ".join(f"{m} {float(pf[m]['parse_failed_rate']):.1%}" for m in models
                         if m in pf and pf[m].get("parse_failed_rate") not in ("", None)) or "see parse_failures.csv"
-    models_paragraph = (
-        "GPT-OSS-120B, GPT-OSS-20B and Qwen3.8-27B via Groq, each at full design (40 claims × 6 conditions × "
-        "3 repetitions = 720 calls) plus the interpreter arm (C1 and C2 with the interpreter: 240 calls); Gemini 3.5 "
-        "Flash-Lite via Google AI Studio at full design (720 calls); 3,600 calls in all. Completed cells: "
-        + ", ".join(f"{m} {n}" for m, n in counts.items()) + f". Parse failures: {pf_text}.")
+    # §3.3 reads "{slot}: GPT-OSS-120B, ... (the model list)", so the slot is a lead-in with the run facts
+    n_planned = sum(len(R.plan_cells(cfg, m, R.B.load_claims())) for m in cfg["models"])
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    models_paragraph = (f"{words.get(len(models), str(len(models)))} models ({len(df):,} of {n_planned:,} planned "
+                        "cells completed: " + ", ".join(f"{m} {n}" for m, n in counts.items())
+                        + f"; parse-failure rates: {pf_text})")
     jid = cfg.get("judge", {}).get("model_id", "the judge")
     judge_model = {"judge": f"`{jid}` (Gemma 4 31B via the Gemini API, temperature 0, blind to model, condition and truth)",
                    "human": "the author's blind hand-labels (the judge failed the pilot check, so the §5 fallback applies)",
@@ -1152,7 +1146,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
     synthetic = bool(df["synthetic"].any())
-    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist)
+    notes = draft_notes(draft_text)
+    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1189,8 +1184,19 @@ def dist_table_md(sdist: pd.DataFrame, ctype: str) -> str:
     return "\n".join(out)
 
 
-def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist) -> str:
-    prereg = git_out("log", "-1", "--format=%h", "--", "PREREGISTRATION.md") or "<hash>"
+def draft_notes(draft_text: str) -> list[str]:
+    """Checks on draft text that no slot covers: the cited pre-registration commit."""
+    notes = []
+    cited = re.search(r"rev (\d+(?:\.\d+)*), commit `([0-9a-f]{7,40})`", draft_text)
+    latest = git_out("log", "-1", "--format=%h", "--", "PREREGISTRATION.md")
+    if cited and latest and not (latest.startswith(cited.group(2)) or cited.group(2).startswith(latest)):
+        notes.append(f"- §3 cites pre-registration rev {cited.group(1)}, commit `{cited.group(2)}`, but the latest "
+                     f"commit touching PREREGISTRATION.md is `{latest}`. Cite the version in force when data "
+                     "collection began, and list any later change in DEVIATIONS.md.")
+    return notes
+
+
+def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=()) -> str:
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
@@ -1213,19 +1219,13 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     for k, e in enumerate(entries, 1):
         ph = e["placeholder"] if len(e["placeholder"]) <= 90 else e["placeholder"][:88] + "…}"
         lines += [f"### {k}. `{ph}`", "", f"Line {e['line']} ({e['section'] or 'top'})", "", e["text"], ""]
-    lines += ["## Other text in REPORT_DRAFT.md to update", "",
-              f"- §3: the pre-registration is rev 3.2, commit `{prereg}` (the draft says rev 3.1, `62535a8`).",
-              "- §3.3: the slot text replaces the placeholder *and* the stale sentence after it, which still lists "
-              "Gemini 3.1 Flash-Lite and the Gemini 3.6 Flash spot check (both dropped in rev 3.2).",
+    lines += ["## Other text in REPORT_DRAFT.md to check", "",
               "- §4.2: the slot reports real-obscure false claims plus the pre-registered both-twin test; invented "
               "items are in §4.6.",
-              "- §4.8: delete \"3.1 vs 3.5 Flash-Lite. Spot check.\"; the 120B vs 20B comparison is below.",
-              "- Appendix A, first limitation: frontier models were not tested (the spot check was dropped).",
               "- §3 cites `DEVIATIONS.md`: list any deviations there, or state that there were none.",
               "- README and Appendix A: say when the data were collected (dates above); collection before the "
               "sprint (13–15 Nov 2026) must be disclosed.",
-              "- The draft's instruction line names `data/results_summary.md`; the file is "
-              "`data/results/results_summary.md`."]
+              "- §4.8: use the per-model table and the scale comparison below.", *notes]
     if source == "human":
         lines += ["- §3.4: scope accuracy comes from the author's 150 hand-labels, not the judge; reword the sentence "
                   "\"judged by … with judge–human agreement …\" to match."]

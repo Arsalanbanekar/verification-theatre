@@ -3,7 +3,7 @@
 *Draft for the Apart Research AI x Epistemics Research Sprint, 13–15 Nov 2026. Track 2: Trust
 Infrastructure. Paste section by section into the official template.*
 
-> **Before submitting:** every `{PLACEHOLDER}` is filled from `data/results_summary.md`.
+> **Before submitting:** every `{PLACEHOLDER}` is filled from `data/results/results_summary.md`.
 > Every reference marked `[verify]` must be opened and checked. Made-up references can
 > disqualify a submission. Delete any claim in Results or Discussion the data does not support.
 > Sections marked **(pre-sprint)** were drafted before 13 Nov and say so in the README.
@@ -117,7 +117,7 @@ evidence move that confidence.
 ## 3. Methods (pre-sprint; check against final code before submitting)
 
 Design, hypotheses and analysis plan were pre-registered before data collection
-(`PREREGISTRATION.md`, rev 3.1, commit `62535a8`). Deviations are listed in `DEVIATIONS.md`.
+(`PREREGISTRATION.md`, rev 3.3, commit `3941c4c`). Deviations are listed in `DEVIATIONS.md`.
 
 ### 3.1 Corpus
 
@@ -168,10 +168,10 @@ no information the manifest does not contain.
 
 ### 3.3 Models and sampling
 
-{FILL FROM models.yaml AND RUN LOGS}: GPT-OSS-120B, GPT-OSS-20B and Qwen3.8-27B via Groq;
-Gemini 3.1 Flash-Lite and 3.5 Flash-Lite via Google AI Studio, each at full design (40 claims ×
-6 conditions × 3 repetitions = 720 calls); Gemini 3.6 Flash as a spot check (10 claims × C0/C1 ×
-3). Temperature 0.7; each model at its provider's lowest reasoning setting ({SETTINGS}). The
+{FILL FROM models.yaml AND RUN LOGS}: GPT-OSS-120B, GPT-OSS-20B and Qwen3.8-27B via Groq,
+each at full design (40 claims × 6 conditions × 3 repetitions = 720 calls) plus the interpreter
+arm (C1 and C2 × 3 repetitions = 240 calls); Gemini 3.5 Flash-Lite via Google AI Studio at full
+design (720 calls). Temperature 0.7; each model at its provider's lowest reasoning setting ({SETTINGS}). The
 prompt states the current date and asks whether the claim is accurate, returning JSON with an
 acceptance label, a 0–100 confidence, reasons from a fixed list, and a short justification. The
 prompt never mentions that the study concerns credentials.
@@ -186,20 +186,26 @@ prompt never mentions that the study concerns credentials.
 - **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
   certifies, judged by {JUDGE MODEL} on a stratified sample of {N} responses, with judge–human
-  agreement on 30 hand-labelled items ({KAPPA}).
+  agreement on 30 hand-labelled items ({KAPPA}). The judge is used only if it returns a valid
+  score on at least 9 of 10 pilot calls; otherwise scope accuracy is the author's blind
+  hand-labels on 150 stratified responses. Reported as the 0/1/2 distribution among
+  justifications that mention the credential, plus the share that mention it, all with 95% CIs.
 
 ### 3.5 Analysis
 
-Pairs are the unit of analysis. Six primary comparisons (C1 vs C0; C2 vs C3; C4 vs C1 and C3;
-discrimination across conditions; scope accuracy across C1–C4; interpreter vs none) with Holm
-correction. Inflation tests exclude pairs at ceiling in C0; the full sample is reported
-alongside. Claim type enters as a factor throughout.
+Pairs are the unit of analysis: paired t-tests over pairs, with sign-flip permutation tests
+as a robustness check. Six primary comparisons (C1 vs C0; C2 vs C3; C4 vs C1 and C3;
+discrimination across conditions; scope accuracy across C1–C4; interpreter vs none) comprise
+eight tests, with Holm correction over the eight. H3 is supported only if the upper bound of
+the 95% CI for the share of credential-mentioning justifications scored 2 is below 0.5 and its
+Holm-adjusted p is below .05. Inflation tests exclude pairs at ceiling in C0; the full sample
+is reported alongside. Claim type enters as a factor throughout.
 
 ---
 
 ## 4. Results — written during the sprint
 
-Fill every slot from `data/results_summary.md`. Report what the data shows, including nulls.
+Fill every slot from `data/results/results_summary.md`. Report what the data shows, including nulls.
 
 **4.1 Baseline.** C0 acceptance: real-obscure true {X}, false {X}; invented true {X}, false {X}.
 {One sentence on whether invented claims were rejected at baseline.}
@@ -222,7 +228,7 @@ claims from organisations the model did not recognise?}
 
 **4.7 Countermeasure (H4).** Interpreter vs none on C1/C2: {Δ, CI, p_holm}.
 
-**4.8 Models.** Per-model table. 120B vs 20B. 3.1 vs 3.5 Flash-Lite. Spot check.
+**4.8 Models.** Per-model table. 120B vs 20B.
 
 ---
 
@@ -245,7 +251,7 @@ proprietary models, how acceptance and confidence in a fixed claim change when a
 attached, and whether models distinguish credentials that license different inferences.
 
 **What it does not establish.**
-- Behaviour of frontier models, which were tested only as a spot check or not at all.
+- Behaviour of frontier models, which were not tested.
 - Behaviour in agentic loops, where a model retrieves, compares and cross-checks sources.
 - Behaviour on cryptographically signed assets: credentials were presented as crJSON-style
   views, a derived format not intended as input and not independently verifiable.

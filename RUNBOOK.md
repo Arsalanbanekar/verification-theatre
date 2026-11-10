@@ -51,7 +51,7 @@ see; section 12 lists what can go wrong and what to do.
 pip install -r requirements.txt
 python -m pytest -q
 ```
-You should see a final line like `447 passed in 90s`: no `failed` and no `error`.
+You should see a final line like `449 passed in 90s`: no `failed` and no `error`.
 
 Check that both keys are present, without printing them:
 ```
@@ -441,13 +441,16 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
    slot with its line number, and every number comes from its tables. Rewrite the wording as
    you like, but keep the numbers. Where a sentence says "did not reliably change", keep that
    meaning: it reflects the test, not a style choice.
-3. **Fix the stale text** listed under "Other text in REPORT_DRAFT.md to update" in
+3. **Check the text no slot covers**, listed under "Other text in REPORT_DRAFT.md to check" in
    `results_summary.md`:
-   - pre-registration rev 3.2 and its commit;
-   - the old model sentence in §3.3;
-   - "3.1 vs 3.5 Flash-Lite. Spot check." in §4.8;
-   - the "spot check" wording in Appendix A;
-   - the `DEVIATIONS.md` reference.
+   - the `DEVIATIONS.md` reference;
+   - the collection dates;
+   - the pre-registration commit cited in §3 (the summary flags it if `PREREGISTRATION.md`
+     changed after that commit);
+   - on the fallback path, the §3.4 judge sentence.
+
+   The draft's facts (rev 3.3, the four models, the judge rule, the tests, the H3 rule) were
+   updated before data collection.
 4. **Figures:** Figure 1 goes in §4.2 and Figure 2 in §4.4. Figures 3 and 4 are optional for
    §4.5 and §4.7, if space allows (8 pages maximum before references and appendices).
 5. **§4.5 examples:** pick one correct and one misattributing justification from

@@ -20,10 +20,10 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
 - **Grading** `src/grade.py`, `src/judge.py`: deterministic metrics; the Gemma judge (resumable,
   paced, blind); blind hand-label CSVs; weighted kappa, overall and per family.
 - **Analysis** `src/analyse.py`: the §7 tests, four figures, and text for all 27 slots in
-  `REPORT_DRAFT.md`. Checked on synthetic data (`src/synthetic.py`).
+  `REPORT_DRAFT.md`, whose facts are current (rev 3.3). Checked on synthetic data.
 - **RUNBOOK.md** (the whole run without AI help) and **DEVIATIONS.md** (changes made after data
   collection began; empty).
-- **Tests**: 447 passing, offline (`python -m pytest -q`).
+- **Tests**: 449 passing, offline (`python -m pytest -q`).
 
 ## Key decisions
 
@@ -56,8 +56,6 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
 3. **Power.** There are 10 real-obscure pairs and Holm runs over 8 tests, so only clear effects
    reach significance. Elsewhere the CIs carry the result, and the generated text says so.
 4. **qwen/qwen3.8-27b is a preview model.** Run `--check-models` just before the main run.
-5. **`REPORT_DRAFT.md`** still names rev 3.1 and the dropped Gemini models.
-   `results_summary.md` lists every line to update.
 
 ## File map
 

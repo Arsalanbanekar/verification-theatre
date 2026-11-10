@@ -146,8 +146,25 @@ def test_outputs_are_written(scenario):
     filled = (out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8")
     assert "SYNTHETIC DATA" in filled.splitlines()[0]
     assert re.findall(r"\{[^{}]*\}", filled) == ["{PLACEHOLDER}"]           # only the instruction line is left
-    assert "Gemini 3.6 Flash as a spot check" not in filled                # the stale model sentence is replaced
-    assert "Gemini 3.6 Flash as a spot check" in DRAFT.read_text(encoding="utf-8")   # the draft itself is untouched
+    assert ("Four models (3,600 of 3,600 planned cells completed: " in filled
+            and "): GPT-OSS-120B, GPT-OSS-20B and Qwen3.8-27B via Groq" in filled)   # §3.3 lead-in + model list
+    assert DRAFT.read_text(encoding="utf-8") != filled                     # the draft itself is never written
+
+
+def test_draft_states_the_current_facts():
+    text = " ".join(DRAFT.read_text(encoding="utf-8").split())           # independent of line wrapping
+    for stale in ("Gemini 3.1", "Gemini 3.6", "spot check", "Spot check", "rev 3.1", "data/results_summary.md"):
+        assert stale not in text, stale
+    for fact in ("rev 3.3", "Gemini 3.5 Flash-Lite", "at least 9 of 10 pilot calls", "paired t-tests over pairs",
+                 "Holm correction over the eight", "upper bound of the 95% CI", "data/results/results_summary.md"):
+        assert fact in text, fact
+
+
+def test_draft_notes_flag_a_stale_prereg_commit():
+    latest = A.git_out("log", "-1", "--format=%h", "--", "PREREGISTRATION.md")
+    assert A.draft_notes(f"(`PREREGISTRATION.md`, rev 3.3, commit `{latest}`)") == []
+    note = A.draft_notes("(`PREREGISTRATION.md`, rev 3.1, commit `62535a8`)")
+    assert len(note) == 1 and "62535a8" in note[0] and latest in note[0]
 
 
 def test_every_draft_placeholder_maps_to_a_slot():
