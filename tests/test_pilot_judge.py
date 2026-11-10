@@ -5,9 +5,11 @@ import re
 import pytest
 import yaml
 
+from src import grade as G
 from src import judge as J
 from src import runner as R
 from src.providers import gemini, groq
+from src.providers.common import HttpResult
 from tests.test_runner import FakeSend, env, gemini_ok, groq_ok  # noqa: F401  (env is a fixture)
 
 MODELS = ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b", "gemini-3.5-flash-lite")
@@ -85,6 +87,76 @@ def test_pilot_warns_when_projection_is_over_4_dollars(env, monkeypatch, capsys)
     pilot("--config", str(path))
     rep = json.loads((env["tmp"] / "pilot" / "pilot_report.json").read_text(encoding="utf-8"))
     assert rep["projection_over_warning"] and "WARNING: projected total" in capsys.readouterr().out
+
+
+GEMMA_503 = ('{\n  "error": {\n    "code": 503,\n    "message": "This model is currently experiencing high demand. '
+             'Spikes in demand are usually temporary. Please try again later.",\n    "status": "UNAVAILABLE"\n  }\n}\n')
+
+
+def scripted_gemini(judge_script):
+    """Judge calls take their reply from judge_script (an HttpResult, or an exception to raise), then succeed."""
+    calls = {"judge": [], "study": []}
+
+    def send(cfg, payload, api_key, timeout):
+        if cfg["model_id"].startswith("gemma"):
+            calls["judge"].append(payload)
+            if judge_script:
+                item = judge_script.pop(0)
+                if isinstance(item, BaseException):
+                    raise item
+                return item
+            return gemini_ok(JUDGE_OK)
+        calls["study"].append(payload)
+        return gemini_ok()
+    return send, calls
+
+
+def test_judge_failures_are_logged_in_full_and_announced(env, monkeypatch, capsys):
+    gsend, calls = scripted_gemini([HttpResult(503, {}, json.loads(GEMMA_503), GEMMA_503, 31.0),
+                                    HttpResult(None, {}, None, "", 120.0, error="ReadTimeout: read timed out")])
+    monkeypatch.setattr(groq, "send", FakeSend(default=groq_ok))
+    monkeypatch.setattr(gemini, "send", gsend)
+    assert pilot() == 0
+    ev = R.read_raw(env["tmp"] / "pilot" / "logs" / "judge.events.jsonl")
+    assert [(e["status"], e["attempt"]) for e in ev] == [(503, 1), (None, 2)]
+    assert ev[0]["body"] == GEMMA_503 and ev[0]["stage"] == "pilot" and ev[0]["response_id"].endswith("|C1|0|0")
+    assert ev[1]["error"] == "ReadTimeout: read timed out" and ev[1]["action"].startswith("retry 2 of 5")
+    out = capsys.readouterr().out
+    assert "[judge] HTTP 503" in out and "[judge] HTTP None: ReadTimeout" in out and "**PASS**" in out
+
+
+def test_ctrl_c_in_the_judge_stage_stops_cleanly_and_resumes(env, monkeypatch, capsys):
+    gsend, calls = scripted_gemini([gemini_ok(JUDGE_OK), gemini_ok(JUDGE_OK), KeyboardInterrupt()])
+    groq_fake = FakeSend(default=groq_ok)
+    monkeypatch.setattr(groq, "send", groq_fake)
+    monkeypatch.setattr(gemini, "send", gsend)
+    assert pilot() == 1                                   # returns: no KeyboardInterrupt traceback
+    out = capsys.readouterr().out
+    assert "Interrupted in the judge stage: 2 of 10 judgements are saved" in out
+    assert "INCOMPLETE" in out and "Re-run `python src/runner.py --pilot`" in out
+    pdir = env["tmp"] / "pilot"
+    rep = json.loads((pdir / "pilot_report.json").read_text(encoding="utf-8"))
+    assert rep["judge_passed"] is None and rep["judge_verdict"] == "INCOMPLETE" and not rep["judge_complete"]
+    assert G.pilot_judge_passed(pdir) is None             # not read as a FAIL by grade.py or analyse.py
+    study_calls = len(groq_fake.calls) + len(calls["study"])
+    assert pilot() == 0                                   # finishing: 8 more judge calls, no study calls
+    assert len(calls["judge"]) == 3 + 8 and len(groq_fake.calls) + len(calls["study"]) == study_calls
+    assert json.loads((pdir / "pilot_report.json").read_text(encoding="utf-8"))["judge_passed"] is True
+
+
+def test_an_interrupted_study_stage_does_not_start_the_judge(env, monkeypatch, capsys):
+    gsend, calls = scripted_gemini([])
+    monkeypatch.setattr(groq, "send", FakeSend(default=groq_ok))
+    monkeypatch.setattr(gemini, "send", gsend)
+
+    def interrupted(workers, progress, stop, every, grace):
+        stop.set()                                        # what Ctrl+C does inside wait_for
+        for w in workers:
+            w.join()
+    monkeypatch.setattr(R, "wait_for", interrupted)
+    assert pilot() == 1
+    assert calls["judge"] == [] and not (env["tmp"] / "pilot" / "pilot_report.json").exists()
+    assert "interrupted before the judge stage" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("text,score", [

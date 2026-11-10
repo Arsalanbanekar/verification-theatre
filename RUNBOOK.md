@@ -51,7 +51,7 @@ see; section 12 lists what can go wrong and what to do.
 pip install -r requirements.txt
 python -m pytest -q
 ```
-You should see a final line like `449 passed in 90s`: no `failed` and no `error`.
+You should see a final line like `464 passed in 100s`: no `failed` and no `error`.
 
 Check that both keys are present, without printing them:
 ```
@@ -131,6 +131,7 @@ Read `data/pilot/pilot_report.md` and act on it:
 | A row `PARSE FAIL` | That call's JSON failed twice | Open `data/pilot/<model>.jsonl` and read `raw_text` and `finish_reason`. If `finish_reason` is `length`, the answer was cut off: raise that model's `max_output_tokens` in `models.yaml` before the freeze. One failure is not a blocker; parse failures are reported per model. |
 | Judge `**PASS**` (at least 9 of 10 valid) | The judge will score scope accuracy | Section 9, judge path |
 | Judge `**FAIL**` | Pre-registered fallback: your hand-labels | Section 9, fallback path |
+| Judge `**INCOMPLETE**` | Fewer than 10 judge calls returned (Ctrl+C, quota, or server errors), so there is no verdict yet | Re-run `python src/runner.py --pilot`. It re-asks nothing that already returned. Failed judge attempts are printed as `[judge] HTTP ...` and logged in full in `data/pilot/logs/judge.events.jsonl`. |
 | `WARNING: projected total ... above $4.00` | The full run may hit the $4.50 hard stop | Apply the cut order (section 15) before the main run and record it in `DEVIATIONS.md` |
 | `Projected total including spend so far: $X` | Cost of the full run, from measured tokens | Keep this number for the report |
 
@@ -161,7 +162,7 @@ gemini-3.5-flash-lite.
 | 3 | Groq: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b | `python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b` | 30–90 min |
 | 4 | Gemini, up to its daily quota | `python src/runner.py --models gemini-3.5-flash-lite` | ~40 min, then it stops for the day |
 | 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
-| 6 | Grade and judge, once all four models are done | `python src/grade.py --judge` | 30–40 min |
+| 6 | Grade and judge, once all four models are done | `python src/grade.py --judge` | hours (see section 9) |
 | 7 | Hand-label 30 (or 150 on the fallback path) | section 10 | 45 min (150: 3–4 h) |
 | 8 | Analysis | `python src/analyse.py` | 1 min |
 | 9 | Write up, check, submit | sections 13–14 | |
@@ -269,7 +270,7 @@ judge sample 600; already judged 0; to judge 600
   ...
   judged 600/600
 ```
-This takes 30–40 minutes, paced to stay under the judge's limits (30 RPM, 16,000 TPM). If it stops early, re-run
+Calls go one at a time, so latency sets the pace. The rate limits (30 RPM, 16,000 TPM) would allow about 20 a minute, but in the pilot Gemma took 20–43 seconds per call. At that speed 600 calls take 3–7 hours, so start it early and leave it running. A retry prints `[judge] HTTP ...` and is logged in `data/graded/judge.events.jsonl`. Ctrl+C stops cleanly. If it stops early, re-run
 the same command; judged items are kept and the sample is fixed once drawn. Then go to section
 10a.
 
@@ -401,6 +402,7 @@ git commit -m "Analysis results"
 | `WARNING: the projection ($X) is above the hard stop` before starting | The measured cost projects above $4.50 | Answer `n`. Apply the cut order first. |
 | State `CRASHED: ... (see events log)` | An unexpected error in that model's worker; the others continue | Read the traceback in `data/logs/<model>.events.jsonl` (event `crash`), then re-run. If it crashes on the same cell every time, record it in `DEVIATIONS.md` and run the other models with `--models`. |
 | Laptop slept, Wi-Fi dropped, or the terminal closed | Calls failed or the process died | Re-run `python src/runner.py`. Nothing is lost except calls in flight. |
+| Events log shows `json_validate_failed` (Qwen) | Groq's schema check rejected the model's answer (HTTP 400) | Nothing; this is handled. The generated text is parsed like any reply, retried once with the next seed, then recorded as `parse_failed` if it still fails. The raw line keeps the generated text. |
 | Many `parse_failed` for one model | The model returns invalid JSON | Do not change settings mid-run. Look at `raw_text` and `finish_reason` in `data/raw/<model>.jsonl`. Report the rate per model (it is in `per_model.csv`). |
 | `No model has an API key; nothing to do.` | `.env` not found | Run from the repository folder; check `.env` |
 
@@ -412,8 +414,10 @@ git commit -m "Analysis results"
 | `Note: no pilot report found` | `data/pilot/pilot_report.json` is missing | Run the pilot first, or note it in `DEVIATIONS.md` |
 | `Judge RPD 14400 reached; resume after ...` | The configured daily cap (far above the 600 needed) | Re-run after the printed time |
 | `Judge stopped: judge daily quota exhausted` | Google's daily quota for Gemma | Re-run after 13:30 IST; judged items are kept |
+| `[judge] HTTP 503: ... high demand ...; retry 2 of 5 in 20s` | Google is overloaded, or the call timed out (`HTTP None: ReadTimeout`) | Nothing; it retries 5 times. Every attempt is in `judge.events.jsonl`. |
 | `Judge stopped: judge failing repeatedly: HTTP 5xx` | Provider trouble | Wait 10–30 minutes, re-run |
 | `Judge stopped: judge request rejected: HTTP 4xx` | Key or model id problem | Check `GEMINI_API_KEY`; the judge model is `gemma-4-31b-it` in `models.yaml` |
+| `Interrupted in the judge stage: ...` (pilot) or `Interrupted: N judged in this run ...` | You pressed Ctrl+C | Re-run the same command. Judged items are kept, and an interrupted pilot reports INCOMPLETE, not FAIL. |
 | `human_sample_30.csv already exists (it may hold your labels)` | Protects your labels | Keep the file. Only use `--overwrite` to start labelling again. |
 | `N items have no valid score (need 2, 1, 0 or NA): [...]` | Empty or mistyped cells | Fill those items and import again |
 | `KeyError` during `--import-human` | Rows were added or renumbered | Restore the `item` column. The labels file must match its `human_key` file. |

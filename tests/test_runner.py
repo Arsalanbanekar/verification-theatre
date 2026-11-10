@@ -265,6 +265,78 @@ def test_blocked_api_access_stops_every_groq_model(env, monkeypatch, capsys):
     assert "blocked_api_access" in capsys.readouterr().out
 
 
+def groq_json_invalid(generation):
+    """Groq's HTTP 400 when its schema validation rejects what the model generated."""
+    body = {"error": {"message": "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for "
+                                 "more details.", "type": "invalid_request_error", "code": "json_validate_failed",
+                      "failed_generation": generation}}
+    return HttpResult(400, {}, body, json.dumps(body), 0.2)
+
+
+# what qwen3.8-27b produced in the pilot (shortened): no "reasons", then a runaway invented key
+RUNAWAY = ('{"accept": "true", "confidence": 100, "justification": "The statement is a verbatim match.", '
+           '"signaling_source_or_method_or_context_if_applicitabe_detail_or_indicator_if_applicitabe_detail_or_ind')
+
+
+def one_cell(env, *extra):
+    return run(env, "--models", "qwen3.8-27b", "--claims", "real-01-t", "--conditions", "C0", "--reps", "1", *extra)
+
+
+def test_json_validate_failed_is_parsed_then_retried_with_the_next_seed(env, monkeypatch):
+    fake = FakeSend(groq_json_invalid(RUNAWAY), default=groq_ok)
+    monkeypatch.setattr(groq, "send", fake)
+    assert one_cell(env) == 0
+    first, second = raw(env, "qwen3.8-27b")
+    assert (first["status"], first["http_status"], first["raw_text"]) == ("parse_retry", 400, RUNAWAY)
+    assert first["finish_reason"] == "json_validate_failed" and first["parse_error"].startswith(
+        "HTTP 400 json_validate_failed; invalid JSON")
+    assert first["cost_usd"] > 0 and first["usage"]["estimated"]           # billed or not, the budget counts it
+    assert second["status"] == "ok" and second["seed"] == first["seed"] + 1
+    ev = events(env, "qwen3.8-27b")
+    assert [e["event"] for e in ev] == ["json_validate_failed"] and ev[0]["failed_generation"] == RUNAWAY
+
+
+def test_json_validate_failed_twice_records_parse_failed_and_continues(env, monkeypatch):
+    fake = FakeSend(groq_json_invalid(RUNAWAY), groq_json_invalid(""), default=groq_ok)
+    monkeypatch.setattr(groq, "send", fake)
+    assert run(env, "--models", "qwen3.8-27b", "--claims", "real-01", "--conditions", "C0", "--reps", "1") == 0
+    recs = raw(env, "qwen3.8-27b")
+    assert [r["status"] for r in recs] == ["parse_retry", "parse_failed", "ok"]   # the next cell still runs
+    assert recs[1]["parse_error"] == "HTTP 400 json_validate_failed; empty response"
+    assert "fatal_http_error" not in {e["event"] for e in events(env, "qwen3.8-27b")}
+
+
+def test_json_validate_failed_with_a_valid_generation_is_kept(env, monkeypatch):
+    fake = FakeSend(groq_json_invalid(GOOD))      # Groq's validator rejected it; our parser accepts it
+    monkeypatch.setattr(groq, "send", fake)
+    assert one_cell(env) == 0
+    (rec,) = raw(env, "qwen3.8-27b")
+    assert rec["status"] == "ok" and rec["http_status"] == 400 and len(fake.calls) == 1
+
+
+@pytest.mark.parametrize("res,expected", [
+    (groq_json_invalid("{\"a\": 1"), "{\"a\": 1"),
+    (HttpResult(400, {}, {"error": {"code": "json_validate_failed"}}, "{}", 0.1), ""),
+    (HttpResult(400, {}, None, json.dumps({"error": {"code": "json_validate_failed", "failed_generation": "x"}}),
+                0.1), "x"),
+    (HttpResult(400, {}, {"error": {"code": "blocked_api_access"}}, "{}", 0.1), None),
+    (HttpResult(400, {}, None, "<html>Bad Request</html>", 0.1), None),
+    (groq_ok(), None),
+])
+def test_failed_generation_is_recognised_only_for_json_validate_failed(res, expected):
+    assert groq.failed_generation(res) == expected
+    assert gemini.failed_generation(res) is None
+
+
+def test_strict_schema_is_on_unless_a_model_turns_it_off():
+    cfg = R.load_config(R.REPO / "models.yaml")
+    msgs = [{"role": "user", "content": "x"}]
+    strict = lambda m: groq.build_payload(m, msgs, temperature=0.7, seed=1, max_output_tokens=10,
+                                          schema={})["response_format"]["json_schema"]["strict"]
+    assert all(strict(cfg["models"][n]) is True for n in ("gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b"))
+    assert strict({**cfg["models"]["qwen3.8-27b"], "json_schema_strict": False}) is False
+
+
 def test_cost_is_recorded_per_response(env, monkeypatch):
     monkeypatch.setattr(groq, "send", FakeSend(default=groq_ok))
     run(env, "--models", "qwen3.8-27b", "--claims", "inv-01-t", "--conditions", "C0", "--reps", "1")

@@ -22,8 +22,10 @@ def build_payload(cfg: dict, messages: list[dict], *, temperature, seed, max_out
     if seed is not None:
         p["seed"] = seed
     p["max_completion_tokens"] = max_output_tokens
+    # strict: true unless the model's config sets json_schema_strict: false (none does)
     p["response_format"] = {"type": "json_schema",
-                            "json_schema": {"name": "answer", "strict": True, "schema": schema}}
+                            "json_schema": {"name": "answer", "strict": bool(cfg.get("json_schema_strict", True)),
+                                            "schema": schema}}
     p.update(cfg.get("reasoning") or {})  # reasoning_effort, include_reasoning / reasoning_format
     return p
 
@@ -38,6 +40,23 @@ def endpoint(cfg: dict) -> str:
 
 def send(cfg: dict, payload: dict, api_key: str, timeout: float) -> HttpResult:
     return post_json(URL, {"Authorization": f"Bearer {api_key}"}, payload, timeout)
+
+
+def failed_generation(res: HttpResult) -> str | None:
+    """The model's text from an HTTP 400 json_validate_failed (Groq generated an answer but it failed
+    schema validation), or None for any other response. "" if Groq sent no failed_generation."""
+    if res.status != 400:
+        return None
+    body = res.body
+    if not isinstance(body, dict):
+        try:
+            body = json.loads(res.text or "")
+        except (json.JSONDecodeError, TypeError):
+            return None
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict) or err.get("code") != "json_validate_failed":
+        return None
+    return str(err.get("failed_generation") or "")
 
 
 def extract(body: dict) -> Completion:

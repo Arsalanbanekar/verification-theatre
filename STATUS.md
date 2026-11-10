@@ -1,7 +1,11 @@
 # Status
 
-Last updated 10 Nov 2026. Data collection starts now, before the sprint (13–15 Nov 2026), in
-this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §4–8).
+Last updated 10 Nov 2026. Data collection started on 10 Nov 2026, before the sprint (13–15 Nov
+2026): the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §4–8).
+
+Pilot, first run: 17 of 20 study calls. Qwen's C2 got HTTP 400 json_validate_failed (now retried,
+not fatal); the judge made 4 valid calls, then hit 5xx or timeouts and was stopped with Ctrl+C.
+Finish with `python src/runner.py --pilot`.
 
 ## Done
 
@@ -23,7 +27,7 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
   `REPORT_DRAFT.md`, whose facts are current (rev 3.3). Checked on synthetic data.
 - **RUNBOOK.md** (the whole run without AI help) and **DEVIATIONS.md** (changes made after data
   collection began; empty).
-- **Tests**: 449 passing, offline (`python -m pytest -q`).
+- **Tests**: 464 passing, offline (`python -m pytest -q`).
 
 ## Key decisions
 
@@ -72,5 +76,4 @@ this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §
 
 ## How to run
 
-See `RUNBOOK.md`: the pilot and the freeze, then `runner.py` (Groq, then Gemini),
-`grade.py --judge`, hand-labels, and `analyse.py`.
+See `RUNBOOK.md` (pilot, freeze, Groq, Gemini, judge, hand-labels, analysis).

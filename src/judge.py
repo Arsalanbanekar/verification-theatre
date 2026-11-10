@@ -93,9 +93,11 @@ class JudgeStop(Exception):
 
 
 class JudgeClient:
-    """Paced, retrying calls to the judge model. Writes nothing itself."""
+    """Paced, retrying calls to the judge model. Every attempt that does not return HTTP 200 is
+    appended in full (status, transport error, body) to events_path, if given, and announced."""
 
-    def __init__(self, judge_cfg: dict, api_key: str, sleep=None, clock=time.monotonic):
+    def __init__(self, judge_cfg: dict, api_key: str, sleep=None, clock=time.monotonic,
+                 events_path=None, say=None):
         from src.runner import Pacer  # shared pacing logic
         self.cfg = judge_cfg
         self.provider = PROVIDERS[judge_cfg["provider"]]
@@ -104,17 +106,31 @@ class JudgeClient:
         self.stop = threading.Event()
         self.pacer = Pacer(lim.get("rpm"), lim.get("tpm"), self.stop, clock=clock)
         self.sleep = sleep or (lambda s: time.sleep(s))
+        self.events_path = events_path
+        self.say = say or (lambda msg: None)
 
-    def judge(self, facts: str, statement: str, justification: str, seed: int) -> dict:
+    def _log_failure(self, res, attempt: int, context: dict | None, action: str) -> None:
+        detail = res.error or (res.text or "")[:200].replace("\n", " ")
+        self.say(f"  [judge] HTTP {res.status}: {detail}; {action}")
+        if self.events_path is not None:
+            from src.runner import append_jsonl, utcnow
+            append_jsonl(self.events_path, {
+                "timestamp_utc": utcnow().isoformat(), "event": "judge_http_error", "model_id": self.cfg["model_id"],
+                **(context or {}), "attempt": attempt, "status": res.status, "error": res.error,
+                "body": res.text, "headers": dict(res.headers or {}), "latency_s": round(res.latency_s or 0.0, 3),
+                "action": action})
+
+    def judge(self, facts: str, statement: str, justification: str, seed: int, context: dict | None = None) -> dict:
         messages = judge_messages(facts, statement, justification)
         payload = self.provider.build_payload(self.cfg, messages, temperature=self.cfg.get("temperature", 0.0),
                                               seed=seed, max_output_tokens=self.cfg.get("max_output_tokens", 400),
                                               schema=None)
         est = int(len(messages[0]["content"]) / 3.6) + 150
-        transient = 0
+        transient = attempt = 0
         while True:
             self.pacer.wait(est)
             res = self.provider.send(self.cfg, payload, self.api_key, 120)
+            attempt += 1
             if res.status == 200 and isinstance(res.body, dict):
                 comp = self.provider.extract(res.body)
                 self.pacer.record(self.provider.total_tokens(comp.usage) or est)
@@ -126,13 +142,20 @@ class JudgeClient:
             if res.status == 429:
                 rl = self.provider.classify_429(res)
                 if rl.scope == "day":
+                    self._log_failure(res, attempt, context, "daily quota: stopping")
                     raise JudgeStop("judge daily quota exhausted: " + rl.detail[:200])
-                self.sleep((rl.wait_s or 30.0) + random.uniform(0, 2))
+                wait = (rl.wait_s or 30.0) + random.uniform(0, 2)
+                self._log_failure(res, attempt, context, f"per-minute limit: retrying in {wait:.0f}s")
+                self.sleep(wait)
                 continue
             if res.status is None or res.status >= 500 or res.status in (408, 409, 498):
                 transient += 1
                 if transient > 5:
+                    self._log_failure(res, attempt, context, "failing repeatedly: stopping")
                     raise JudgeStop(f"judge failing repeatedly: HTTP {res.status} {res.error or res.text[:200]}")
-                self.sleep(min(120.0, 5.0 * 2 ** transient) + random.uniform(0, 3))
+                wait = min(120.0, 5.0 * 2 ** transient) + random.uniform(0, 3)
+                self._log_failure(res, attempt, context, f"retry {transient} of 5 in {wait:.0f}s")
+                self.sleep(wait)
                 continue
+            self._log_failure(res, attempt, context, "request rejected: stopping")
             raise JudgeStop(f"judge request rejected: HTTP {res.status} {res.text[:300]}")

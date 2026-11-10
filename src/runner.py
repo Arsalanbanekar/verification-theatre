@@ -46,6 +46,7 @@ if __package__ in (None, ""):  # run as a script
 from src import build_documents as B
 from src.output_schema import SCHEMA, parse_response
 from src.providers import PROVIDERS
+from src.providers.common import Completion
 
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "data"
@@ -243,6 +244,12 @@ def append_jsonl(path: Path, obj: dict) -> None:
 
 def estimate_tokens(messages: list[dict]) -> int:
     return int(sum(len(m["content"]) for m in messages) / CHARS_PER_TOKEN)
+
+
+def generated_tokens(text: str) -> int:
+    """Output tokens for a reply that came back without usage (Groq json_validate_failed). Errs high,
+    at 2.5 characters per token: malformed generations tokenize worse than prose."""
+    return max(1, (2 * len(text or "") + 4) // 5)
 
 
 def unique_dirs(*dirs) -> list[Path]:
@@ -551,8 +558,18 @@ class Worker(threading.Thread):
             res = self.send(cell, payload, est_in)
             if res is None:
                 return  # transient failures; the cell stays undone for the next run
-            comp = self.provider.extract(res.body)
+            failed = self.provider.failed_generation(res)
+            if failed is not None:  # Groq json_validate_failed: parse what the model generated, as any reply
+                est_out = generated_tokens(failed)
+                comp = Completion(failed, None, {"prompt_tokens": est_in, "completion_tokens": est_out,
+                                                 "total_tokens": est_in + est_out,
+                                                 "estimated": "from the prompt and failed_generation lengths"},
+                                  "json_validate_failed", {})
+            else:
+                comp = self.provider.extract(res.body)
             parsed, err = parse_response(comp.text)
+            if failed is not None and err:
+                err = f"HTTP 400 json_validate_failed; {err}"
             status = "ok" if parsed else ("parse_retry" if attempt == 1 else "parse_failed")
             tin, tout, cost = usage_cost(self.m, comp.usage)
             append_jsonl(self.raw_path, {
@@ -610,6 +627,19 @@ class Worker(threading.Thread):
                 self.pacer.record(used)
                 self.calls_today += 1
                 self.tokens_today += used
+                return res
+            failed = self.provider.failed_generation(res)
+            if failed is not None:
+                # The model answered but Groq's schema validation rejected it (HTTP 400 json_validate_failed).
+                # Not fatal: do_cell parses failed_generation like any reply, so the usual retry-once-then-
+                # parse_failed rule applies. No usage comes back, so the cost is estimated, erring high.
+                est_out = generated_tokens(failed)
+                self.last_cost = est_in * pin + est_out * pout
+                self.budget.settle(self.model, worst, self.last_cost)
+                self.pacer.record(est_in + est_out)
+                self.calls_today += 1
+                self.tokens_today += est_in + est_out
+                self.event("json_validate_failed", cell, status=res.status, failed_generation=failed, body=res.text)
                 return res
             self.budget.settle(self.model, worst, 0.0)
             if res.status == 429:
@@ -781,9 +811,10 @@ def pilot_cells(cfg: dict, name: str) -> list[Cell]:
     return [Cell(name, PILOT_CLAIM, c, i, 0) for c, i in [(c, False) for c in PILOT_CONDITIONS] + [extra]]
 
 
-def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path):
+def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path, logs_dir: Path | None = None):
     """Judge PILOT_JUDGE_CALLS pilot responses from C1-C4, round-robin over models. Each response is
-    judged once; re-running reuses earlier judgements rather than asking again."""
+    judged once; re-running reuses earlier judgements rather than asking again. Failed judge attempts
+    go to logs_dir/judge.events.jsonl. Ctrl+C stops cleanly, keeping every judgement made."""
     from src.judge import JudgeClient, JudgeStop, credential_facts, response_id
     jcfg = cfg.get("judge")
     if not jcfg:
@@ -805,25 +836,33 @@ def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path):
     if not key and any(response_id(r) not in earlier for r in cands):
         return [earlier[response_id(r)] for r in cands if response_id(r) in earlier], \
             f"stopped: {PROVIDERS[jcfg['provider']].KEY_ENV} not set"
-    client = JudgeClient(jcfg, key or "", sleep=lambda s: SLEEP(threading.Event(), s))
+    events = Path(logs_dir or pilot_dir / "logs") / "judge.events.jsonl"
+    client = JudgeClient(jcfg, key or "", sleep=lambda s: SLEEP(threading.Event(), s), events_path=events, say=say)
     rows, status = [], "done"
-    for rec in cands:
-        rid = response_id(rec)
-        if rid in earlier:
-            rows.append(earlier[rid])
-            continue
-        claim = claims_by_id[rec["claim_id"]]
-        try:
-            j = client.judge(credential_facts(ctx, claim, rec["condition"]), claim["text"],
-                             rec["parsed"]["justification"], seed=_int_seed(jcfg.get("seed", 0), rid))
-        except JudgeStop as e:
-            status = f"stopped: {e}"
-            break
-        row = {"response_id": rid, "timestamp_utc": utcnow().isoformat(), "judge_model_id": jcfg["model_id"],
-               "model": rec["model"], "claim_id": rec["claim_id"], "condition": rec["condition"],
-               "interpreter": rec["interpreter"], "rep": rec["rep"], **j}
-        append_jsonl(jpath, row)
-        rows.append(row)
+    try:
+        for rec in cands:
+            rid = response_id(rec)
+            if rid in earlier:
+                rows.append(earlier[rid])
+                continue
+            claim = claims_by_id[rec["claim_id"]]
+            try:
+                j = client.judge(credential_facts(ctx, claim, rec["condition"]), claim["text"],
+                                 rec["parsed"]["justification"], seed=_int_seed(jcfg.get("seed", 0), rid),
+                                 context={"stage": "pilot", "response_id": rid})
+            except JudgeStop as e:
+                status = f"stopped: {e}"
+                break
+            row = {"response_id": rid, "timestamp_utc": utcnow().isoformat(), "judge_model_id": jcfg["model_id"],
+                   "model": rec["model"], "claim_id": rec["claim_id"], "condition": rec["condition"],
+                   "interpreter": rec["interpreter"], "rep": rec["rep"], **j}
+            append_jsonl(jpath, row)
+            rows.append(row)
+            say(f"  judge {len(rows)}/{len(cands)}: {rid} -> {row['score'] if row['valid'] else 'INVALID'}")
+    except KeyboardInterrupt:
+        status = "interrupted (Ctrl+C)"
+        say(f"Interrupted in the judge stage: {len(rows)} of {PILOT_JUDGE_CALLS} judgements are saved in {jpath}. "
+            "Re-run `python src/runner.py --pilot` to make the rest; nothing already done is asked again.")
     return rows, status
 
 
@@ -848,14 +887,21 @@ def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, jud
     lines += ["", f"{n_calls} study responses; pilot spend ${pilot_spend:.4f}.", ""]
 
     valid = sum(1 for j in judge_rows if j.get("valid"))
-    passed = len(judge_rows) >= PILOT_JUDGE_CALLS and valid >= PILOT_JUDGE_PASS
+    complete = len(judge_rows) >= PILOT_JUDGE_CALLS   # the rule is judged on 10 calls that returned
+    passed = complete and valid >= PILOT_JUDGE_PASS
+    verdict = "PASS" if passed else "FAIL" if complete else "INCOMPLETE"
     lines += ["## Judge", "",
               f"{cfg.get('judge', {}).get('model_id', '-')}: {valid}/{len(judge_rows)} calls returned a valid score "
-              f"(pass rule: at least {PILOT_JUDGE_PASS}/{PILOT_JUDGE_CALLS}). **{'PASS' if passed else 'FAIL'}**. "
+              f"(pass rule: at least {PILOT_JUDGE_PASS}/{PILOT_JUDGE_CALLS}). **{verdict}**. "
               f"Status: {judge_status}.", ""]
-    if not passed:
+    if verdict == "FAIL":
         lines += ["Per PREREGISTRATION.md §5, scope accuracy must then come from the author's hand-labels on 150 "
                   "stratified responses: `python src/grade.py --human-sample 150`.", ""]
+    elif verdict == "INCOMPLETE":
+        lines += [f"No verdict yet: the rule needs {PILOT_JUDGE_CALLS} judge calls that returned, and "
+                  f"{len(judge_rows)} did. Failed attempts are logged in `judge.events.jsonl` in the pilot's logs "
+                  "folder. Re-run `python src/runner.py --pilot` to finish; it re-asks nothing that already "
+                  "returned.", ""]
     lines += ["| response | score | valid | reason or error |", "|---|---|---|---|"]
     for j in judge_rows:
         why = (j.get("reason") or j.get("parse_error") or "").replace("|", "/")[:80]
@@ -877,7 +923,8 @@ def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, jud
                   "Apply the CLAUDE.md cut order or reduce qwen's share before the main run."]
     summary = {"generated_utc": utcnow().isoformat(), "study_responses": n_calls, "pilot_spend_usd": round(pilot_spend, 6),
                "judge_model_id": cfg.get("judge", {}).get("model_id"), "judge_calls": len(judge_rows),
-               "judge_valid": valid, "judge_passed": passed, "judge_status": judge_status,
+               "judge_valid": valid, "judge_passed": passed if complete else None, "judge_complete": complete,
+               "judge_verdict": verdict, "judge_status": judge_status,
                "projected_total_usd": round(total, 4), "projection_over_warning": over,
                "projection": [{k: r[k] for k in ("model", "todo", "in_per_call", "out_per_call", "usd_left")} for r in rows]}
     return "\n".join(lines) + "\n", summary
@@ -892,13 +939,20 @@ def run_pilot(cfg, names, ctx, claims_by_id, args) -> int:
     workers = start_workers(cfg, plans, ctx, claims_by_id, pilot_dir, logs_dir, None, progress, stop)
     if workers:
         wait_for(workers, progress, stop, args.progress_every, args.request_grace)
-    judge_rows, judge_status = pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir)
+    if stop.is_set():
+        say("Pilot interrupted before the judge stage; completed calls are kept. Re-run "
+            "`python src/runner.py --pilot` to continue.")
+        return 1
+    judge_rows, judge_status = pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir, logs_dir)
     report, summary = pilot_report(cfg, names, ctx, claims_by_id, pilot_dir, judge_rows, judge_status)
     pilot_dir.mkdir(parents=True, exist_ok=True)
     (pilot_dir / "pilot_report.md").write_text(report, encoding="utf-8", newline="\n")
     (pilot_dir / "pilot_report.json").write_text(json.dumps(summary, indent=1), encoding="utf-8", newline="\n")
     say("\n" + report)
     say(f"Saved {pilot_dir / 'pilot_report.md'} and pilot_report.json.")
+    if not summary["judge_complete"]:
+        say("The pilot is not finished (judge check INCOMPLETE). Re-run `python src/runner.py --pilot`.")
+        return 1
     return 0
 
 

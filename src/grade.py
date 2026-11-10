@@ -150,10 +150,13 @@ def judge_pool(rows):
 
 
 def pilot_judge_passed(pilot_dir: Path):
+    """True or False once the pilot's 10 judge calls have returned; None if there is no pilot report
+    or its judge check is incomplete (interrupted, quota, server errors)."""
     p = Path(pilot_dir) / "pilot_report.json"
     if not p.exists():
         return None
-    return bool(json.loads(p.read_text(encoding="utf-8")).get("judge_passed"))
+    v = json.loads(p.read_text(encoding="utf-8")).get("judge_passed")
+    return None if v is None else bool(v)
 
 
 def run_judge(cfg, graded_dir: Path, limit=None, force=False, pilot_dir: Path = DATA / "pilot") -> int:
@@ -165,7 +168,8 @@ def run_judge(cfg, graded_dir: Path, limit=None, force=False, pilot_dir: Path = 
               "Use --force only to collect judge scores as secondary data.")
         return 1
     if passed is None:
-        print("Note: no pilot report found; the pre-registered pass check has not been run.")
+        print("Note: the pilot's judge check is missing or incomplete, so the pre-registered pass rule has not "
+              "been applied. Finish it first: python src/runner.py --pilot")
     rows = read_csv(graded_dir / "responses.csv")
     sample_path = graded_dir / "judge_sample.csv"
     if sample_path.exists():  # fixed once drawn, so re-runs judge the same responses
@@ -191,28 +195,37 @@ def run_judge(cfg, graded_dir: Path, limit=None, force=False, pilot_dir: Path = 
         return 1
     ctx = B.load_context()
     claims = {c["id"]: c for c in B.load_claims()}
-    client = JudgeClient(jcfg, key, sleep=lambda s: R.SLEEP(client.stop, s))
+    graded_dir.mkdir(parents=True, exist_ok=True)
+    client = JudgeClient(jcfg, key, sleep=lambda s: R.SLEEP(client.stop, s),
+                         events_path=graded_dir / "judge.events.jsonl", say=print)
     calls_today = sum(1 for j in R.read_raw(jpath)
                       if str(j.get("timestamp_utc", ""))[:10] == dt.datetime.now(dt.timezone.utc).date().isoformat())
     rpd = (jcfg.get("limits") or {}).get("rpd")
-    graded_dir.mkdir(parents=True, exist_ok=True)
-    for k, rid in enumerate(todo[:limit] if limit else todo, 1):
-        if rpd and calls_today >= rpd:
-            print(f"Judge RPD {rpd} reached; {R.resume_message(R.utcnow())}. Re-run to continue.")
-            return 0
-        r = by_id[rid]
-        claim = claims[r["claim_id"]]
-        try:
-            j = client.judge(credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
-                             seed=R._int_seed(jcfg.get("seed", 0), rid))
-        except JudgeStop as e:
-            print(f"Judge stopped: {e}. Re-run to continue; finished judgements are kept.")
-            return 1
-        calls_today += 1
-        R.append_jsonl(jpath, {"response_id": rid, "timestamp_utc": R.utcnow().isoformat(),
-                               "judge_model_id": jcfg["model_id"], **j})
-        if k % 25 == 0 or k == len(todo):
-            print(f"  judged {k}/{len(todo)}")
+    batch = todo[:limit] if limit else todo
+    done_now = 0
+    try:
+        for k, rid in enumerate(batch, 1):
+            if rpd and calls_today >= rpd:
+                print(f"Judge RPD {rpd} reached; {R.resume_message(R.utcnow())}. Re-run to continue.")
+                return 0
+            r = by_id[rid]
+            claim = claims[r["claim_id"]]
+            try:
+                j = client.judge(credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
+                                 seed=R._int_seed(jcfg.get("seed", 0), rid), context={"stage": "main", "response_id": rid})
+            except JudgeStop as e:
+                print(f"Judge stopped: {e}. Re-run to continue; finished judgements are kept.")
+                return 1
+            calls_today += 1
+            R.append_jsonl(jpath, {"response_id": rid, "timestamp_utc": R.utcnow().isoformat(),
+                                   "judge_model_id": jcfg["model_id"], **j})
+            done_now = k
+            if k % 25 == 0 or k == len(batch):
+                print(f"  judged {k}/{len(batch)}")
+    except KeyboardInterrupt:
+        print(f"Interrupted: {done_now} judged in this run, {len(sample_ids) - len(todo) + done_now} of "
+              f"{len(sample_ids)} in all, saved in {jpath}. Re-run the same command to continue.")
+        return 1
     return 0
 
 

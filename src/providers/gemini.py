@@ -41,6 +41,11 @@ def send(cfg: dict, payload: dict, api_key: str, timeout: float) -> HttpResult:
     return post_json(URL.format(model=cfg["model_id"]), {"x-goog-api-key": api_key}, payload, timeout)
 
 
+def failed_generation(res: HttpResult) -> str | None:
+    """Groq's json_validate_failed has no Gemini counterpart: schema mode returns 200 or an error."""
+    return None
+
+
 def extract(body: dict) -> Completion:
     usage = body.get("usageMetadata") or {}
     extra = {"modelVersion": body.get("modelVersion"), "responseId": body.get("responseId")}

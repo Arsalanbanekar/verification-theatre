@@ -104,6 +104,34 @@ def test_judge_refuses_after_a_failed_pilot(dirs, monkeypatch, capsys):
     assert grade(dirs, "--judge", "--limit", "5", "--force") == 0 and len(calls) == 5
 
 
+def test_judge_failures_are_logged_and_ctrl_c_stops_cleanly(dirs, monkeypatch, capsys):
+    body = '{"error": {"code": 503, "message": "This model is currently experiencing high demand.", "status": "UNAVAILABLE"}}'
+    script = [HttpResult(503, {}, json.loads(body), body, 30.0)]
+    calls = []
+
+    def send(cfg, payload, api_key, timeout):
+        if script:
+            return script.pop(0)
+        if len(calls) == 3:
+            raise KeyboardInterrupt
+        return judge_reply(cfg, payload, api_key, timeout, calls)
+    monkeypatch.setattr(gemini, "send", send)
+    assert grade(dirs, "--judge", "--limit", "10") == 1        # returns instead of raising
+    out = capsys.readouterr().out
+    assert "[judge] HTTP 503" in out and "Interrupted: 3 judged in this run, 3 of 600 in all" in out
+    assert len(R.read_raw(dirs["graded"] / "judgements.jsonl")) == 3
+    (ev,) = R.read_raw(dirs["graded"] / "judge.events.jsonl")
+    assert ev["status"] == 503 and ev["body"] == body and ev["stage"] == "main"
+
+
+def test_an_incomplete_pilot_check_is_not_a_fail(dirs):
+    dirs["pilot"].mkdir(parents=True)
+    path = dirs["pilot"] / "pilot_report.json"
+    for value, expected in ((None, None), (True, True), (False, False)):
+        path.write_text(json.dumps({"judge_passed": value}), encoding="utf-8")
+        assert G.pilot_judge_passed(dirs["pilot"]) is expected
+
+
 def label(d, n, scores):
     path = d["human"] / f"human_sample_{n}.csv"
     items = rows(path)
