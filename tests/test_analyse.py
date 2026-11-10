@@ -142,6 +142,7 @@ def test_outputs_are_written(scenario):
     assert examples.count("\n- `") == 12 and "Score 0 in C2" in examples
     summary = (out / "results_summary.md").read_text(encoding="utf-8")
     assert "SYNTHETIC DATA" in summary and "## Robustness" in summary and "Scale within family" in summary
+    assert "Responses collected from 2026-11-13 12:00 to 2026-11-13 12:00 UTC" in summary
     filled = (out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8")
     assert "SYNTHETIC DATA" in filled.splitlines()[0]
     assert re.findall(r"\{[^{}]*\}", filled) == ["{PLACEHOLDER}"]           # only the instruction line is left

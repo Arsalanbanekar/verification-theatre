@@ -9,11 +9,11 @@ see; section 12 lists what can go wrong and what to do.
 1. [Rules that hold throughout](#1-rules-that-hold-throughout)
 2. [Setup check](#2-setup-check-once-before-the-pilot)
 3. [Rehearsal on synthetic data](#3-rehearsal-on-synthetic-data-no-api-calls)
-4. [The pilot](#4-the-pilot-by-wed-11-nov)
-5. [Freeze](#5-freeze-wed-11-nov)
-6. [Sprint timeline](#6-sprint-timeline)
-7. [Main run](#7-main-run-fri-13-nov-from-1330)
-8. [Gemini's second day](#8-gemini-second-day-sat-14-nov-from-1330)
+4. [The pilot](#4-the-pilot-first)
+5. [Freeze](#5-freeze-right-after-the-pilot)
+6. [Timeline](#6-timeline)
+7. [Main run: Groq, then Gemini](#7-main-run-groq-then-gemini)
+8. [Gemini, second quota day](#8-gemini-second-quota-day)
 9. [Grading and the judge](#9-grading-and-the-judge)
 10. [Hand-labels and kappa](#10-hand-labels-and-kappa)
 11. [Analysis](#11-analysis)
@@ -26,14 +26,18 @@ see; section 12 lists what can go wrong and what to do.
 
 ## 1. Rules that hold throughout
 
-- **No experimental data before 13 Nov 2026.** The pilot (30 calls, section 4) is the only
-  exception. It is disclosed and excluded from analysis.
-- **Never edit, move or delete anything in `data/raw/` or `data/pilot/`.** The scripts only
-  append. A torn last line after a crash is skipped automatically.
+- **Data collection starts before the sprint** (13–15 Nov 2026), so it must be disclosed. The
+  README says so, and the report must give the collection dates (section 13). The pilot (30
+  calls, section 4) is excluded from analysis.
+- **Never edit, move or delete anything in `data/raw/`, `data/pilot/` or `data/logs/`, and
+  never alter a timestamp.** The scripts only append, and every response records when it was
+  collected. A torn last line after a crash is skipped automatically.
 - **Do not change the protocol once the main run starts.** That covers prompts, conditions,
   models, temperature, reasoning settings and reps. If something must change, first write an
   entry in `DEVIATIONS.md` (time, what, why), then change it. Pacing limits (`rpm`, `tpm`, `rpd`
   in `models.yaml`) are not protocol and can be adjusted.
+- **Commit after each stage; push only when you decide to publish.** No step below depends
+  on pushing.
 - **Every command is safe to re-run.** The runner skips finished cells and the judge skips
   judged responses. When in doubt, re-run the same command.
 - **No uncommitted changes to tracked files while the runner runs.** Each response records the
@@ -47,7 +51,7 @@ see; section 12 lists what can go wrong and what to do.
 pip install -r requirements.txt
 python -m pytest -q
 ```
-You should see a final line like `441 passed in 90s`: no `failed` and no `error`.
+You should see a final line like `447 passed in 90s`: no `failed` and no `error`.
 
 Check that both keys are present, without printing them:
 ```
@@ -102,7 +106,7 @@ Open `data/synthetic/results/results_summary.md`, `REPORT_DRAFT.filled.md` and t
 The fake data raises acceptance in C1–C4, separates the twins in C5, and has the interpreter
 cut acceptance. `data/synthetic/` is git-ignored; delete it whenever you like.
 
-## 4. The pilot (by Wed 11 Nov)
+## 4. The pilot (first)
 
 ```
 python src/runner.py --pilot
@@ -134,49 +138,58 @@ Then commit the pilot. It is disclosed data:
 ```
 git add data/pilot
 git commit -m "Pilot: 20 study calls and 10 judge calls on real-01-t (disclosed; excluded from analysis)"
-git push
 ```
 
-## 5. Freeze (Wed 11 Nov)
+## 5. Freeze (right after the pilot)
 
 ```
 git status
-git tag -a sprint-freeze -m "Code, corpus and analysis frozen before data collection"
-git push origin sprint-freeze
+git tag -a sprint-freeze -m "Code, corpus and analysis frozen before the main run"
 ```
-`git status` should report nothing to commit. From here, no code changes. If a bug forces one
-during the sprint, commit it on its own with a message saying why, and add a `DEVIATIONS.md`
-entry.
+`git status` should report nothing to commit. From here, no code changes. If a bug forces one,
+commit it on its own with a message saying why, and add a `DEVIATIONS.md` entry.
 
-## 6. Sprint timeline
+## 6. Timeline
 
-| When (IST) | What | Command | Takes |
+Data collection starts now, in this order: the pilot, the freeze, the three Groq models, then
+gemini-3.5-flash-lite.
+
+| Step | What | Command | Takes |
 |---|---|---|---|
-| Fri 13 Nov, 13:30 or later | Main run, all four models | `python src/runner.py` | Groq models 30–90 min; Gemini stops after 500 calls (~40 min) |
-| Fri evening | First look: metrics only, no judge | `python src/grade.py` | 1 min |
-| Sat 14 Nov, 13:30 or later | Gemini's last 220 calls | `python src/runner.py` | ~20 min |
-| Sat afternoon | Grade and judge 600 responses | `python src/grade.py --judge` | ~45 min |
-| Sat evening | Hand-label 30 (or 150 on the fallback path) | section 10 | 45 min (150: 3–4 h) |
-| Sat night | Analysis | `python src/analyse.py` | 1 min |
-| Sun 15 Nov | Write up, check, submit | sections 13–14 | the day |
+| 1 | Pilot, then read its report | `python src/runner.py --pilot` | a few minutes |
+| 2 | Freeze | section 5 | 2 min |
+| 3 | Groq: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b | `python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b` | 30–90 min |
+| 4 | Gemini, up to its daily quota | `python src/runner.py --models gemini-3.5-flash-lite` | ~40 min, then it stops for the day |
+| 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
+| 6 | Grade and judge, once all four models are done | `python src/grade.py --judge` | ~45 min |
+| 7 | Hand-label 30 (or 150 on the fallback path) | section 10 | 45 min (150: 3–4 h) |
+| 8 | Analysis | `python src/analyse.py` | 1 min |
+| 9 | Write up, check, submit | sections 13–14 | |
 
-Why 13:30: Gemini's daily quota of 500 resets at midnight US Pacific, which is 13:30 IST.
-Starting then gives Gemini a full day's quota, and every date in the logs (local, UTC and
-Pacific) reads 13 Nov. If the sprint's official start is later than 13:30, start after it.
+**Gemini's quota.** Gemini allows 500 calls a day, and its day resets at midnight US Pacific,
+which is 13:30 IST.
+- The first session uses whatever is left of the current Pacific day. The pilot's 5 Gemini
+  calls count if they fell on the same Pacific day.
+- Started before 13:30 IST, the first stop clears at 13:30 the same day, so Gemini can finish
+  that afternoon.
+- Started after 13:30 IST, Gemini finishes after 13:30 the next day.
 
-## 7. Main run (Fri 13 Nov, from 13:30)
+## 7. Main run: Groq, then Gemini
 
+**Groq first.**
 ```
 python src/runner.py --check-models
-python src/runner.py
+python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b
 ```
-The runner prints the projection table, then asks:
+The runner prints the projection table for the three Groq models, then asks:
 ```
-Start the run? Projected total spend $3.23. [y/N]
+Start the run? Projected total spend $3.25. [y/N]
 ```
-Type `y` and press Enter. Any other answer prints `Not started; nothing was sent.` Then:
+Your number will differ: the total includes the pilot's spend, and after the pilot the
+projection uses measured tokens. Type `y` and press Enter; any other answer prints
+`Not started; nothing was sent.` Then:
 ```
-run 3f2a9c1b7d4e at <commit>: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b, gemini-3.5-flash-lite. Ctrl+C stops cleanly.
+run 3f2a9c1b7d4e at <commit>: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b. Ctrl+C stops cleanly.
 ```
 and every 30 seconds:
 ```
@@ -184,21 +197,27 @@ and every 30 seconds:
   gpt-oss-120b            412/960  done (ok 410, parse_failed 2), 548 left | $0.183 | this run 415 calls, 41.2/min | running
   gpt-oss-20b             ...
   qwen3.8-27b             ...
-  gemini-3.5-flash-lite   120/720  done (ok 120, parse_failed 0), 600 left | $0.000 | this run 120 calls, 14.6/min | running
   total spend on disk $0.912
 ```
-- Rates: Groq models depend on response speed; Gemini is paced to 15 per minute.
-- Each Groq model ends in the state `finished: every planned cell is done`.
-- Gemini stops itself at 500 calls:
-  ```
-  [gemini-3.5-flash-lite] daily limit reached (500 calls today reaches the configured RPD 500). Stopping this model; resume after 2026-11-14 00:00 Pacific = 08:00 UTC = 2026-11-14 13:30 local.
-  ```
-- The command returns when every model has finished or stopped.
-- To stop early, press Ctrl+C once. You'll see
-  `Interrupted: finishing the calls in flight, then stopping.` Re-run the same command later
-  to continue.
+Each model ends in the state `finished: every planned cell is done`, and then the command
+returns. To stop early, press Ctrl+C once: you'll see
+`Interrupted: finishing the calls in flight, then stopping.` Re-run the same command to
+continue.
 
-Friday evening, take a first look (no API calls):
+**Then Gemini.**
+```
+python src/runner.py --models gemini-3.5-flash-lite
+```
+Answer `y`. Gemini is free, so the projected total is the spend so far. It runs at about 15
+calls a minute and stops itself at the daily quota (dates vary):
+```
+[gemini-3.5-flash-lite] daily limit reached (500 calls today reaches the configured RPD 500). Stopping this model; resume after 2026-11-11 00:00 Pacific = 08:00 UTC = 2026-11-11 13:30 local.
+```
+Google may run out first, because the pilot's calls count for Google but not for the runner.
+The reason then reads `provider reports the daily quota is exhausted`. Either way, continue
+with section 8 after the printed local time.
+
+Meanwhile, take a first look (no API calls):
 ```
 python src/grade.py
 ```
@@ -207,25 +226,26 @@ python src/grade.py
   gpt-oss-120b           cells  960  parse_failed   3 (0.0031)  retries 4  $0.39
   ...
 ```
-(3,380 = 2,880 Groq + 500 Gemini; a few fewer if some cells were skipped after errors.)
-Check the parse-failure rates. Do **not** run `--judge` yet: the judge sample is drawn once,
-stratified across all four models, so it must wait for Gemini to finish.
+3,380 is 2,880 Groq plus 500 Gemini. It is a few fewer if the pilot shared Gemini's day, or if
+some cells were skipped after errors.
+- Check the parse-failure rates.
+- Do **not** run `--judge` yet. The judge sample is drawn once, stratified across all four
+  models, so it must wait for Gemini to finish.
 
 Commit what you have (it is append-only data):
 ```
 git add data/raw data/logs
-git commit -m "Main run, day 1"
-git push
+git commit -m "Main run: Groq complete, Gemini first quota day"
 ```
 
-## 8. Gemini second day (Sat 14 Nov, from 13:30)
+## 8. Gemini, second quota day
 
+After the local time the runner printed:
 ```
-python src/runner.py
+python src/runner.py --models gemini-3.5-flash-lite
 ```
-Same prompt; answer `y`. The Groq models report all cells done at once. Gemini runs its
-remaining ~220 cells (~20 min) and ends with `finished: every planned cell is done`. Confirm
-nothing is left:
+Answer `y`. Gemini runs its remaining cells (about 220, roughly 20 minutes) and ends with
+`finished: every planned cell is done`. Confirm that nothing is left for any model:
 ```
 python src/runner.py --dry-run
 ```
@@ -233,7 +253,6 @@ Every row should show `to run 0`. Then commit:
 ```
 git add data/raw data/logs
 git commit -m "Main run complete"
-git push
 ```
 
 ## 9. Grading and the judge
@@ -302,7 +321,6 @@ Commit the labels and grades:
 ```
 git add data/graded data/human
 git commit -m "Grading, judge scores and hand-labels"
-git push
 ```
 
 ## 11. Analysis
@@ -330,6 +348,7 @@ Outputs in `data/results/`:
 | `fig2_discrimination.png` | Figure 2, §4.4 |
 | `fig3_scope_accuracy.png`, `fig4_interpreter.png` | Optional figures for §4.5 and §4.7 |
 | `example_justifications.md` | Candidate verbatim quotes for §4.5 |
+| `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs |
 | `primary_tests.csv` and the other CSVs | Every number, per model and claim type |
 
 How to read the numbers:
@@ -337,20 +356,23 @@ How to read the numbers:
   all pairs for H4, and invented minus real-obscure for H5, which is exploratory and unadjusted.
 - **Tests** are paired t-tests over twin pairs, with Holm correction over the eight primary
   tests.
+- **H3** is supported only if the upper bound of the 95% CI for the share of
+  credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05.
+  The summary's "Scope accuracy (H3)" section states the verdict and gives the full 0/1/2
+  distribution and the share mentioning the credential, all with CIs.
 - **Robustness section.** If it lists a disagreement between the t-test and the permutation
   test, report the t-test, which is the pre-specified primary, and give the permutation result
   beside it.
 - **Small samples.** With 10 real-obscure pairs, a modest effect can miss significance. Say so
   using the CI rather than calling it "no effect". The generated sentences already do this.
 
-The pre-data choices behind these tests are listed at the top of `src/analyse.py` and in
-`DEVIATIONS.md`.
+The tests and decision rules are those of `PREREGISTRATION.md` §7 (rev 3.3), fixed before any
+data.
 
 Commit the results:
 ```
 git add data/results
 git commit -m "Analysis results"
-git push
 ```
 
 ## 12. Failure modes and fixes
@@ -370,7 +392,7 @@ git push
 |---|---|---|
 | State `waiting 23s (per-minute limit)` | A 429 per-minute limit | Nothing; it waits and continues. If it never stops waiting, lower that model's `rpm`/`tpm` in `models.yaml` (pacing only) and re-run. |
 | `daily limit reached (...). Stopping this model; resume after ... local.` | The day's quota is used (Gemini: 500) | Re-run `python src/runner.py` after the printed local time |
-| Gemini stops well before 500 | Google's real quota is lower than configured | Same: re-run after the printed time. If Gemini cannot finish by Sunday morning, see the cut order (section 15). |
+| Gemini stops well before 500 | Google's real quota is lower than configured | Same: re-run after the printed time. If Gemini cannot finish in time, see the cut order (section 15). |
 | `HTTP 400 blocked_api_access ... Stopping ALL groq models` | Groq blocked the account (billing, spend limit, account status) | Fix it at console.groq.com, then re-run the same command |
 | State `skipping a cell after repeated transient errors` | 5xx, 498 or network failures, retried 5 times | Nothing now; the cell stays undone. Re-run later to pick it up. |
 | `[model] HTTP 401 ...; stopping this model` | Wrong or revoked key | Fix `.env`, re-run |
@@ -438,8 +460,13 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
    `python -c "print(len(open('abstract.txt',encoding='utf-8').read().split()))"` on a text file.
 9. **References:** open every one marked `[verify]`, fix authors and titles, and delete the tag.
    Remove any reference you cannot verify.
-10. **Pre-sprint work:** the README and Appendix A must say that the code predates the sprint,
-    and that a 30-call pilot ran before it. The pilot's date is in `data/pilot/pilot_report.md`.
+10. **Pre-sprint work and data.** The README and Appendix A must say three things:
+    - the code predates the sprint;
+    - a 30-call pilot ran before it;
+    - the data were collected before the sprint (13–15 Nov), with the dates.
+
+    `results_summary.md` gives the first and last collection times, and the pilot's date is in
+    `data/pilot/pilot_report.md`.
 
 ## 14. Submission checklist
 
@@ -447,7 +474,8 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
       in `DEVIATIONS.md`.
 - [ ] Nothing in `data/raw/` was edited: `git diff --stat data/raw` shows only additions since the
       last commit (or nothing).
-- [ ] `DEVIATIONS.md` lists every deviation, or says there were none.
+- [ ] `DEVIATIONS.md` lists every change made after data collection began (only its header
+      means none).
 - [ ] The report contains no `{`: `Select-String -Path REPORT.md -Pattern '\{'` prints nothing.
 - [ ] Each model's parse-failure rate, reasoning setting, judge pilot result and kappa (overall
       and per family) are in the report.
@@ -457,7 +485,9 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
 - [ ] Abstract 150–250 words; main text no more than 8 pages; official template from the
       sprint's Guidelines tab.
 - [ ] Every reference verified; no `[verify]` tags left.
-- [ ] README: pre-sprint code and the pilot disclosed, plus the data collection dates.
+- [ ] README: pre-sprint code, the pilot and the pre-sprint data collection disclosed, with dates.
+- [ ] The report says the data were collected before the sprint, with the dates from
+      `results_summary.md`.
 - [ ] `.env` was never committed: `git log --all --oneline -- .env` prints nothing.
 - [ ] Everything is committed and pushed:
       ```
@@ -510,8 +540,8 @@ A `parse_retry` line is superseded by the cell's next attempt.
 
 | Path | Contents |
 |---|---|
-| `PREREGISTRATION.md` | The plan (rev 3.2) |
-| `DEVIATIONS.md` | What changed from the plan, and the pre-data analysis choices |
+| `PREREGISTRATION.md` | The plan (rev 3.3), including the tests and decision rules (§7) |
+| `DEVIATIONS.md` | Changes made after data collection began |
 | `REPORT_DRAFT.md` | The draft with `{PLACEHOLDER}` slots |
 | `models.yaml` | Models, limits, prices, budget, judge |
 | `src/runner.py` | Study calls, pilot, dry run |

@@ -10,14 +10,16 @@ The hypotheses, design, measures and analysis plan are in
 
 ## Status
 
-**No experimental data has been collected.** No study model has been queried, and data
-collection does not begin until 13 November 2026. The corpus, code and analysis are complete
-and tested offline. A 30-call pilot, disclosed below, runs before the sprint.
+**Data collection began on 10 November 2026, before the sprint.** The pre-registration (rev
+3.3), the corpus, the code and the analysis were committed first. Collection starts with a
+30-call pilot, then the main run: the three Groq models, then Gemini. Every response in
+`data/raw/` and `data/pilot/` records when it was collected, and those timestamps are never
+altered.
 
 ## Work that predates the sprint
 
 The sprint starts on 13 November 2026. Everything in this repository before then is pre-sprint
-work, and the git history dates each file. In particular:
+work, including the data, and the git history dates each file. In particular:
 
 - **Commit `69f332f`** (8 November 2026): the pre-registration (revision 2), the build
   notes in `CLAUDE.md`, five draft corpus claims, and `corpus/screen_names.py`.
@@ -26,11 +28,15 @@ work, and the git history dates each file. In particular:
   (pre-registration §3).
 - **The corpus, condition templates and code** (6–11 November 2026): `corpus/`, `src/`,
   `tests/`, `models.yaml`, `RUNBOOK.md`, and the pre-sprint sections of `REPORT_DRAFT.md`.
-- **Pre-data analysis choices** (9 November 2026): listed in `DEVIATIONS.md`.
+- **Tests and decision rules** (9–10 November 2026, before any data): `PREREGISTRATION.md` §7,
+  revision 3.3.
 - **The pilot**: 20 study calls on one claim (`real-01-t`) and 10 calls to the
-  scope-accuracy judge, run before the sprint to check the pipeline and the judge's
-  pre-registered pass rule. Its data and report are in `data/pilot/`, dated inside
-  `pilot_report.md`. Pilot data is excluded from every analysis.
+  scope-accuracy judge, run to check the pipeline and the judge's pre-registered pass rule.
+  Its data and report are in `data/pilot/`, dated inside `pilot_report.md`. Pilot data is
+  excluded from every analysis.
+- **The main data** (`data/raw/`), collected from 10 November 2026 with the frozen code. The
+  first and last collection times are reported in `data/results/results_summary.md` and in the
+  report.
 
 At the freeze, the code is tagged `sprint-freeze` (RUNBOOK.md §5), so the version that collected
 the data can be checked out exactly.
@@ -39,8 +45,8 @@ the data can be checked out exactly.
 
 | Path | Contents |
 |---|---|
-| `PREREGISTRATION.md` | Hypotheses, conditions, measures, analysis plan (rev 3.2) |
-| `DEVIATIONS.md` | Deviations from the plan, and analysis details fixed before any data |
+| `PREREGISTRATION.md` | Hypotheses, conditions, measures, analysis plan (rev 3.3) |
+| `DEVIATIONS.md` | Changes made after data collection began |
 | `RUNBOOK.md` | How the study is run, step by step, from pilot to submission |
 | `REPORT_DRAFT.md` | Report draft with slots that `src/analyse.py` fills |
 | `CLAUDE.md` | Build instructions for the codebase |

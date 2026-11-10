@@ -63,7 +63,8 @@ SCORE_COLORS = {"0": "#86b6ef", "1": "#2a78d6", "2": "#104281", "NA": "#c8c7c0"}
 # ---------------------------------------------------------------- loading
 
 def load_responses(raw_dir: Path, models) -> pd.DataFrame:
-    rows = [{**G.metrics_row(r), "synthetic": bool(r.get("synthetic"))} for r in G.final_responses(raw_dir, models)]
+    rows = [{**G.metrics_row(r), "synthetic": bool(r.get("synthetic")), "timestamp_utc": r.get("timestamp_utc") or ""}
+            for r in G.final_responses(raw_dir, models)]
     df = pd.DataFrame(rows)
     if df.empty:
         return df
@@ -1196,6 +1197,10 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     lines += [f"Generated {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC by `src/analyse.py` at commit "
               f"`{R.git_commit()}` from `{raw_dir}`: {len(df)} completed cells; models "
               f"{', '.join(sorted(df['model'].unique()))}. Scope-accuracy source: **{source}**.", ""]
+    stamps = sorted(t for t in df["timestamp_utc"] if t)
+    if stamps:
+        lines += [f"Responses collected from {stamps[0][:16].replace('T', ' ')} to {stamps[-1][:16].replace('T', ' ')} "
+                  "UTC (first and last `timestamp_utc` among the analysed responses).", ""]
     for p in problems:
         lines += [f"> **PROTOCOL CHECK FAILED:** {p}. Reasoning must be fixed per model (CLAUDE.md); record this "
                   "in DEVIATIONS.md.", ""]
@@ -1217,6 +1222,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "- §4.8: delete \"3.1 vs 3.5 Flash-Lite. Spot check.\"; the 120B vs 20B comparison is below.",
               "- Appendix A, first limitation: frontier models were not tested (the spot check was dropped).",
               "- §3 cites `DEVIATIONS.md`: list any deviations there, or state that there were none.",
+              "- README and Appendix A: say when the data were collected (dates above); collection before the "
+              "sprint (13–15 Nov 2026) must be disclosed.",
               "- The draft's instruction line names `data/results_summary.md`; the file is "
               "`data/results/results_summary.md`."]
     if source == "human":

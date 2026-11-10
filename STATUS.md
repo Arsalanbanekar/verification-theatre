@@ -1,12 +1,12 @@
 # Status
 
-Last updated 9 Nov 2026, before any data. Sprint 13–15 Nov 2026; build freeze Wed 11 Nov.
-No study model has been queried. Next: the pilot (`RUNBOOK.md` §4), then the freeze.
+Last updated 10 Nov 2026. Data collection starts now, before the sprint (13–15 Nov 2026), in
+this order: the pilot, the freeze, the Groq models, then Gemini (`RUNBOOK.md` §4–8).
 
 ## Done
 
-- **Pre-registration rev 3.2** (`a56281d`): four models, temperature and reasoning stated, judge
-  specified. Revision history in §12.
+- **Pre-registration rev 3.3**: tests and decision rules in §7, with H3 tightened. Rev 3.2
+  (`a56281d`) set the four models, the settings and the judge. Revision history in §12.
 - **Corpus**: 40 claims in 20 twin pairs (10 real-obscure, verified verbatim; 10 invented,
   mirroring them cell by cell). Each half has 5 number and 5 date alterations. Invented names
   are clean in both passes of `corpus/screen_names.py`. Probes: `corpus/*_probe.json`.
@@ -21,9 +21,9 @@ No study model has been queried. Next: the pilot (`RUNBOOK.md` §4), then the fr
   paced, blind); blind hand-label CSVs; weighted kappa, overall and per family.
 - **Analysis** `src/analyse.py`: the §7 tests, four figures, and text for all 27 slots in
   `REPORT_DRAFT.md`. Checked on synthetic data (`src/synthetic.py`).
-- **RUNBOOK.md** (the sprint without AI help) and **DEVIATIONS.md** (empty log, plus the
-  analysis details fixed before data).
-- **Tests**: 441 passing, offline (`python -m pytest -q`).
+- **RUNBOOK.md** (the whole run without AI help) and **DEVIATIONS.md** (changes made after data
+  collection began; empty).
+- **Tests**: 447 passing, offline (`python -m pytest -q`).
 
 ## Key decisions
 
@@ -43,14 +43,15 @@ No study model has been queried. Next: the pilot (`RUNBOOK.md` §4), then the fr
   measured tokens.
 - Judge: `gemma-4-31b-it`, replying in plain text (JSON mode is undocumented for Gemma). Pass
   rule: 9 of 10 valid scores in the pilot. If it fails, the scores come from 150 hand-labels.
-- Analysis: paired t-tests over pairs, Holm over the eight primary tests, with the permutation
-  test as a robustness check. Every pre-data choice is listed in `DEVIATIONS.md`.
+- Analysis (prereg §7, rev 3.3): paired t-tests over pairs and Holm over the eight primary tests,
+  with the permutation test as a robustness check. H3 needs the 95% CI's upper bound for score 2
+  below 0.5 and p_holm < .05.
 
-## Open issues: decide before the freeze
+## Open issues
 
 1. **Run the pilot**: `python src/runner.py --pilot`, then act on the report (`RUNBOOK.md` §4).
-2. **Review the pre-data analysis choices** in `DEVIATIONS.md`, especially the H3 threshold
-   (fewer than half of credential mentions scored 2) and the t-test as primary.
+2. **Pre-sprint data.** `CLAUDE.md` still says "No experimental data before 13 Nov 2026". The
+   README and the report must disclose the collection dates.
 3. **Power.** There are 10 real-obscure pairs and Holm runs over 8 tests, so only clear effects
    reach significance. Elsewhere the CIs carry the result, and the generated text says so.
 4. **qwen/qwen3.8-27b is a preview model.** Run `--check-models` just before the sprint.
@@ -63,7 +64,7 @@ No study model has been queried. Next: the pilot (`RUNBOOK.md` §4), then the fr
 
 | Path | Contents |
 |---|---|
-| `PREREGISTRATION.md`, `DEVIATIONS.md` | The plan; departures from it and pre-data choices |
+| `PREREGISTRATION.md`, `DEVIATIONS.md` | The plan and its tests; changes after data collection began |
 | `RUNBOOK.md`, `REPORT_DRAFT.md` | How to run the sprint; the report draft |
 | `corpus/` | Claims, condition templates, signer, probes, rendered examples |
 | `src/build_documents.py`, `src/prompt_text.py`, `src/output_schema.py` | Prompts and parsing |
@@ -74,5 +75,5 @@ No study model has been queried. Next: the pilot (`RUNBOOK.md` §4), then the fr
 
 ## How to run
 
-See `RUNBOOK.md`: the pilot and freeze, then from 13 Nov `runner.py`, `grade.py --judge`,
-hand-labels, and `analyse.py`.
+See `RUNBOOK.md`: the pilot and the freeze, then `runner.py` (Groq, then Gemini),
+`grade.py --judge`, hand-labels, and `analyse.py`.

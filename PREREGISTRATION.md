@@ -3,7 +3,7 @@
 **Commit this file before any experimental data exists.** Changes after that point go in
 `DEVIATIONS.md`, dated, with a reason — not by editing this file.
 
-Status: pre-registered, awaiting data collection from 13 Nov 2026.
+Status: pre-registered, awaiting data collection.
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
 Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
@@ -85,7 +85,7 @@ source sentence verbatim, including any typography errors on the source page; th
 may normalise these, and the divergence is recorded).
 
 **Obscurity screening** uses a model not in the study, so no study model is queried before
-13 Nov. C0 is the definitive check (§7).
+data collection. C0 is the definitive check (§7).
 
 **Realness probe (8 Nov 2026, `corpus/realness_probe.json`).** A closed-book model outside the
 study, shown all 20 true claims side by side and told some were fabricated, labelled every
