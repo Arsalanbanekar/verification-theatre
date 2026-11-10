@@ -22,7 +22,7 @@ def build_payload(cfg: dict, messages: list[dict], *, temperature, seed, max_out
     if seed is not None:
         gc["seed"] = seed
     gc["maxOutputTokens"] = max_output_tokens
-    if schema is not None:  # None: plain text (the Gemma judge; JSON mode is undocumented for Gemma)
+    if schema is not None:
         gc["responseMimeType"] = "application/json"
         gc["responseJsonSchema"] = schema
     gc.update(cfg.get("generation_config") or {})  # thinkingConfig

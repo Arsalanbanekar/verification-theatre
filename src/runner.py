@@ -5,6 +5,8 @@
   python src/runner.py --yes                the same without the question
   python src/runner.py --models gpt-oss-120b,gemini-3.5-flash-lite
   python src/runner.py --check-models       confirm the configured model IDs exist (lists models only)
+  python src/runner.py --pilot              the pilot: 20 study calls, then the judge check (10 calls)
+  python src/runner.py --pilot --skip-judge the pilot's study calls only
 
 Subsets: --claims real-01-t,inv-01 (claim or pair ids)  --conditions C0,C1  --reps 1  --limit 30
 
@@ -18,7 +20,8 @@ models.yaml, and written to its raw line. All spend on disk (data/raw and data/p
 against budget.hard_stop_usd; each call reserves its worst-case cost before it is sent, so the
 cap holds even with several models running at once.
 
-Keys come from the environment or a .env file: GROQ_API_KEY, GEMINI_API_KEY.
+Keys come from the environment or a .env file: GROQ_API_KEY, GEMINI_API_KEY, and OPENROUTER_API_KEY
+for the judges (the pilot's judge check; grade.py).
 """
 from __future__ import annotations
 
@@ -803,6 +806,7 @@ PILOT_CLAIM = "real-01-t"
 PILOT_CONDITIONS = ("C0", "C1", "C2", "C5")
 PILOT_JUDGE_CALLS = 10
 PILOT_JUDGE_PASS = 9
+PILOT_JUDGE_FILE = "judge_check.jsonl"     # the main judge's format check (§5, rev 3.4); no other judge file is read
 
 
 def pilot_cells(cfg: dict, name: str) -> list[Cell]:
@@ -812,13 +816,12 @@ def pilot_cells(cfg: dict, name: str) -> list[Cell]:
 
 
 def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path, logs_dir: Path | None = None):
-    """Judge PILOT_JUDGE_CALLS pilot responses from C1-C4, round-robin over models. Each response is
-    judged once; re-running reuses earlier judgements rather than asking again. Failed judge attempts
-    go to logs_dir/judge.events.jsonl. Ctrl+C stops cleanly, keeping every judgement made."""
-    from src.judge import JudgeClient, JudgeStop, credential_facts, response_id
-    jcfg = cfg.get("judge")
-    if not jcfg:
-        return [], "skipped: no judge section in models.yaml"
+    """The main judge's format check: PILOT_JUDGE_CALLS pilot responses from C1-C4, round-robin over
+    models. A response this judge model has already scored is reused, never asked again. Every
+    attempt goes to logs_dir/judge_check.attempts.jsonl. Ctrl+C stops cleanly, keeping every
+    judgement made."""
+    from src import judge as J
+    jcfg = J.judge_config(cfg, "main")
     queues = []
     for name in names:
         recs = [r for r in read_raw(pilot_dir / f"{name}.jsonl")
@@ -829,54 +832,52 @@ def pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir: Path, logs_dir: Path |
         for q in queues:
             if q and len(cands) < PILOT_JUDGE_CALLS:
                 cands.append(q.pop(0))
-    jpath = pilot_dir / "judge.jsonl"
-    earlier = {r["response_id"]: r for r in read_raw(jpath)}
+    jpath = pilot_dir / PILOT_JUDGE_FILE
+    ids = [J.response_id(r) for r in cands]
+    earlier = J.judged(jpath, jcfg["model_id"])
     load_env(REPO / ".env")
-    key = os.environ.get(PROVIDERS[jcfg["provider"]].KEY_ENV)
-    if not key and any(response_id(r) not in earlier for r in cands):
-        return [earlier[response_id(r)] for r in cands if response_id(r) in earlier], \
-            f"stopped: {PROVIDERS[jcfg['provider']].KEY_ENV} not set"
-    events = Path(logs_dir or pilot_dir / "logs") / "judge.events.jsonl"
-    client = JudgeClient(jcfg, key or "", sleep=lambda s: SLEEP(threading.Event(), s), events_path=events, say=say)
-    rows, status = [], "done"
-    try:
-        for rec in cands:
-            rid = response_id(rec)
-            if rid in earlier:
-                rows.append(earlier[rid])
-                continue
-            claim = claims_by_id[rec["claim_id"]]
-            try:
-                j = client.judge(credential_facts(ctx, claim, rec["condition"]), claim["text"],
-                                 rec["parsed"]["justification"], seed=_int_seed(jcfg.get("seed", 0), rid),
-                                 context={"stage": "pilot", "response_id": rid})
-            except JudgeStop as e:
-                status = f"stopped: {e}"
-                break
-            row = {"response_id": rid, "timestamp_utc": utcnow().isoformat(), "judge_model_id": jcfg["model_id"],
-                   "model": rec["model"], "claim_id": rec["claim_id"], "condition": rec["condition"],
-                   "interpreter": rec["interpreter"], "rep": rec["rep"], **j}
-            append_jsonl(jpath, row)
-            rows.append(row)
-            say(f"  judge {len(rows)}/{len(cands)}: {rid} -> {row['score'] if row['valid'] else 'INVALID'}")
-    except KeyboardInterrupt:
-        status = "interrupted (Ctrl+C)"
-        say(f"Interrupted in the judge stage: {len(rows)} of {PILOT_JUDGE_CALLS} judgements are saved in {jpath}. "
+    key_env = PROVIDERS[jcfg["provider"]].KEY_ENV
+    key = os.environ.get(key_env)
+    if not key and any(i not in earlier for i in ids):
+        return [earlier[i] for i in ids if i in earlier], f"stopped: {key_env} not set"
+    items = []
+    for rec, rid in zip(cands, ids):
+        claim = claims_by_id[rec["claim_id"]]
+        items.append(J.Item(rid, J.credential_facts(ctx, claim, rec["condition"]), claim["text"],
+                            rec["parsed"]["justification"],
+                            meta={"model": rec["model"], "claim_id": rec["claim_id"], "condition": rec["condition"],
+                                  "interpreter": rec["interpreter"], "rep": rec["rep"],
+                                  "seed": _int_seed(jcfg.get("seed", 0), rid)}))
+    run = J.JudgeRun(jcfg, "main", key or "", jpath, Path(logs_dir or pilot_dir / "logs") / "judge_check.attempts.jsonl",
+                     stage="pilot", say=say)
+    run.progress = lambda row, k: say(f"  judge {run.before + k}/{len(items)}: {row['response_id']} -> "
+                                      f"{row['score'] if row['valid'] else 'INVALID'}")
+    s = run.run(items)
+    done = J.judged(jpath, jcfg["model_id"])
+    rows = [done[i] for i in ids if i in done]
+    if s["interrupted"]:
+        say(f"Interrupted in the judge stage: {len(rows)} of {len(ids)} judgements are saved in {jpath}. "
             "Re-run `python src/runner.py --pilot` to make the rest; nothing already done is asked again.")
-    return rows, status
+    return rows, (f"stopped: {s['stop_reason']}" if s["stop_reason"] else "done")
 
 
-def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, judge_status) -> tuple[str, dict]:
+def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, judge_status,
+                 skipped: bool = False) -> tuple[str, dict]:
+    from src import judge as J
     warn_at = cfg["budget"].get("pilot_warn_usd")
     lines = ["# Pilot report", "", f"Generated {utcnow():%Y-%m-%d %H:%M} UTC. Pilot data lives in `{pilot_dir}` "
              "and is excluded from analysis.", "", "## Study calls", "",
              "| model | condition | interpreter | attempt | status | result | in tok | out tok | $ | s |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     pilot_spend = 0.0
-    n_calls = 0
+    n_calls = cells_done = cells_planned = 0
     for name in names:
         m = cfg["models"][name]
-        for r in read_raw(pilot_dir / f"{name}.jsonl"):
+        records = read_raw(pilot_dir / f"{name}.jsonl")
+        planned = {c.key() for c in pilot_cells(cfg, name)}
+        cells_planned += len(planned)
+        cells_done += len(planned & done_keys(records))
+        for r in records:
             tin, tout, cost = usage_cost(m, r.get("usage") or {})
             pilot_spend += cost
             n_calls += 1
@@ -884,28 +885,37 @@ def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, jud
             result = f"accept={p['accept']} conf={p['confidence']}" if p else f"PARSE FAIL: {(r.get('parse_error') or '')[:40]}"
             lines.append(f"| {name} | {r['condition']} | {'yes' if r['interpreter'] else 'no'} | {r['attempt']} | "
                          f"{r['status']} | {result} | {tin} | {tout} | {cost:.5f} | {r.get('latency_s', 0):.1f} |")
-    lines += ["", f"{n_calls} study responses; pilot spend ${pilot_spend:.4f}.", ""]
+    lines += ["", f"{n_calls} study responses; {cells_done} of {cells_planned} pilot cells done; "
+              f"pilot spend ${pilot_spend:.4f}.", ""]
 
+    jcfg = J.judge_config(cfg, "main")
+    route = ((jcfg.get("route") or {}).get("order") or ["-"])[0]
     valid = sum(1 for j in judge_rows if j.get("valid"))
-    complete = len(judge_rows) >= PILOT_JUDGE_CALLS   # the rule is judged on 10 calls that returned
+    complete = len(judge_rows) >= PILOT_JUDGE_CALLS   # the check is judged on 10 calls that returned
     passed = complete and valid >= PILOT_JUDGE_PASS
-    verdict = "PASS" if passed else "FAIL" if complete else "INCOMPLETE"
-    lines += ["## Judge", "",
-              f"{cfg.get('judge', {}).get('model_id', '-')}: {valid}/{len(judge_rows)} calls returned a valid score "
-              f"(pass rule: at least {PILOT_JUDGE_PASS}/{PILOT_JUDGE_CALLS}). **{verdict}**. "
-              f"Status: {judge_status}.", ""]
-    if verdict == "FAIL":
-        lines += ["Per PREREGISTRATION.md §5, scope accuracy must then come from the author's hand-labels on 150 "
-                  "stratified responses: `python src/grade.py --human-sample 150`.", ""]
-    elif verdict == "INCOMPLETE":
-        lines += [f"No verdict yet: the rule needs {PILOT_JUDGE_CALLS} judge calls that returned, and "
-                  f"{len(judge_rows)} did. Failed attempts are logged in `judge.events.jsonl` in the pilot's logs "
-                  "folder. Re-run `python src/runner.py --pilot` to finish; it re-asks nothing that already "
-                  "returned.", ""]
-    lines += ["| response | score | valid | reason or error |", "|---|---|---|---|"]
-    for j in judge_rows:
-        why = (j.get("reason") or j.get("parse_error") or "").replace("|", "/")[:80]
-        lines.append(f"| {j['response_id']} | {j.get('score')} | {j.get('valid')} | {why} |")
+    verdict = "SKIPPED" if skipped else "PASS" if passed else "FAIL" if complete else "INCOMPLETE"
+    lines += ["## Judge check", ""]
+    if skipped:
+        lines += ["Skipped (`--skip-judge`): no judge call was made. Once the main judge is chosen and set in "
+                  "`models.yaml` (RUNBOOK.md section 9), run `python src/runner.py --pilot` again: it repeats no "
+                  "study call and makes the 10 judge calls.", ""]
+    else:
+        lines += [f"{jcfg.get('model_id') or '-'} via {route}: {valid}/{len(judge_rows)} calls returned a valid "
+                  f"score (format check, pre-registration §5: at least {PILOT_JUDGE_PASS}/{PILOT_JUDGE_CALLS}). "
+                  f"**{verdict}**. Status: {judge_status}.", ""]
+        if verdict == "FAIL":
+            lines += ["Per PREREGISTRATION.md §5 (rev 3.4), correct the request or choose the next candidate before "
+                      "any main-data judging; `grade.py --judge` refuses this model until then.", ""]
+        elif verdict == "INCOMPLETE":
+            lines += [f"No verdict yet: the check needs {PILOT_JUDGE_CALLS} judge calls that returned, and "
+                      f"{len(judge_rows)} did. Every attempt is logged in `judge_check.attempts.jsonl` in the "
+                      "pilot's logs folder. Re-run `python src/runner.py --pilot` to finish; it re-asks nothing "
+                      "that already returned.", ""]
+        lines += ["| response | score | valid | served by | reason or error |", "|---|---|---|---|---|"]
+        for j in judge_rows:
+            why = (j.get("reason") or j.get("parse_error") or "").replace("|", "/")[:80]
+            lines.append(f"| {j['response_id']} | {j.get('score')} | {j.get('valid')} | {j.get('served_by') or '-'} "
+                         f"| {why} |")
 
     claims = list(claims_by_id.values())
     plans_full = {n: order_cells(plan_cells(cfg, n, claims), cfg["defaults"]["base_seed"], n) for n in names}
@@ -916,40 +926,65 @@ def pilot_report(cfg, names, ctx, claims_by_id, pilot_dir: Path, judge_rows, jud
     for r in rows:
         lines.append(f"| {r['model']} | {r['todo']} | {r['in_per_call']:.0f} | {r['out_per_call']:.0f} | {r['usd_left']:.3f} |")
     lines += ["", f"Projected total including spend so far: **${total:.2f}** "
-              f"(hard stop ${cfg['budget'].get('hard_stop_usd', 0):.2f})."]
+              f"(hard stop ${cfg['budget'].get('hard_stop_usd', 0):.2f}). Judge costs are separate (OpenRouter credit)."]
     over = warn_at is not None and total > warn_at
     if over:
         lines += ["", f"**WARNING: projected total ${total:.2f} is above ${warn_at:.2f}.** "
                   "Apply the CLAUDE.md cut order or reduce qwen's share before the main run."]
-    summary = {"generated_utc": utcnow().isoformat(), "study_responses": n_calls, "pilot_spend_usd": round(pilot_spend, 6),
-               "judge_model_id": cfg.get("judge", {}).get("model_id"), "judge_calls": len(judge_rows),
-               "judge_valid": valid, "judge_passed": passed if complete else None, "judge_complete": complete,
-               "judge_verdict": verdict, "judge_status": judge_status,
-               "projected_total_usd": round(total, 4), "projection_over_warning": over,
+    summary = {"generated_utc": utcnow().isoformat(), "study_responses": n_calls, "study_cells_done": cells_done,
+               "study_cells_planned": cells_planned, "pilot_spend_usd": round(pilot_spend, 6),
+               "judge_model_id": jcfg.get("model_id"), "judge_route": jcfg.get("route"), "judge_calls": len(judge_rows),
+               "judge_valid": valid, "judge_passed": None if (skipped or not complete) else passed,
+               "judge_complete": complete, "judge_skipped": skipped, "judge_verdict": verdict,
+               "judge_status": judge_status, "projected_total_usd": round(total, 4), "projection_over_warning": over,
                "projection": [{k: r[k] for k in ("model", "todo", "in_per_call", "out_per_call", "usd_left")} for r in rows]}
     return "\n".join(lines) + "\n", summary
 
 
 def run_pilot(cfg, names, ctx, claims_by_id, args) -> int:
+    from src import judge as J
     pilot_dir, logs_dir = Path(args.out_dir), Path(args.logs_dir)
+    skip = bool(args.skip_judge)
+    if not skip:
+        problems = J.config_problems(cfg, "main")
+        if problems:  # refuse before any study call, not after
+            say("The pilot's judge check needs the main judge, which cannot run yet:")
+            for p in problems:
+                say(f"  - {p}")
+            say("To finish the study calls now:  python src/runner.py --pilot --skip-judge")
+            say("Once the judge is set in models.yaml:  python src/runner.py --pilot")
+            return 2
     plans = {n: (pilot_cells(cfg, n), 0) for n in names}
-    say(f"PILOT: {sum(len(c) for c, _ in plans.values())} study calls on {PILOT_CLAIM}, then up to "
-        f"{PILOT_JUDGE_CALLS} judge calls. Output: {pilot_dir}")
+    planned = sum(len(c) for c, _ in plans.values())
+    left = 0
+    for n, (cells, _) in plans.items():
+        done = done_keys(read_raw(pilot_dir / f"{n}.jsonl"))
+        left += sum(1 for c in cells if c.key() not in done)
+    say(f"PILOT: {planned} study cells on {PILOT_CLAIM}, {left} still to run; then "
+        + ("no judge calls (--skip-judge)." if skip else f"up to {PILOT_JUDGE_CALLS} judge calls.")
+        + f" Output: {pilot_dir}")
     progress, stop = Progress(), threading.Event()
     workers = start_workers(cfg, plans, ctx, claims_by_id, pilot_dir, logs_dir, None, progress, stop)
     if workers:
         wait_for(workers, progress, stop, args.progress_every, args.request_grace)
     if stop.is_set():
-        say("Pilot interrupted before the judge stage; completed calls are kept. Re-run "
-            "`python src/runner.py --pilot` to continue.")
+        say("Pilot interrupted" + ("" if skip else " before the judge stage") + "; completed calls are kept. "
+            "Re-run the same command to continue.")
         return 1
-    judge_rows, judge_status = pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir, logs_dir)
-    report, summary = pilot_report(cfg, names, ctx, claims_by_id, pilot_dir, judge_rows, judge_status)
+    if skip:
+        judge_rows, judge_status = [], "skipped (--skip-judge)"
+    else:
+        judge_rows, judge_status = pilot_judge(cfg, names, ctx, claims_by_id, pilot_dir, logs_dir)
+    report, summary = pilot_report(cfg, names, ctx, claims_by_id, pilot_dir, judge_rows, judge_status, skipped=skip)
     pilot_dir.mkdir(parents=True, exist_ok=True)
     (pilot_dir / "pilot_report.md").write_text(report, encoding="utf-8", newline="\n")
     (pilot_dir / "pilot_report.json").write_text(json.dumps(summary, indent=1), encoding="utf-8", newline="\n")
     say("\n" + report)
     say(f"Saved {pilot_dir / 'pilot_report.md'} and pilot_report.json.")
+    if skip:
+        say("Judge check skipped. Once the main judge is set in models.yaml, run `python src/runner.py --pilot` "
+            "for the 10 judge calls; no study call is repeated.")
+        return 0
     if not summary["judge_complete"]:
         say("The pilot is not finished (judge check INCOMPLETE). Re-run `python src/runner.py --pilot`.")
         return 1
@@ -960,6 +995,8 @@ def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pilot", action="store_true",
                     help="5 calls per model on real-01-t, then 10 judge calls; output to data/pilot")
+    ap.add_argument("--skip-judge", action="store_true",
+                    help="with --pilot: the study calls only, no judge call (the judge check runs later)")
     ap.add_argument("--config", type=Path, default=REPO / "models.yaml")
     ap.add_argument("--models", default="all", help="comma-separated model names from the config, or 'all'")
     ap.add_argument("--dry-run", action="store_true")
@@ -989,6 +1026,8 @@ def main(argv=None) -> int:
     unknown = [n for n in names if n not in cfg["models"]]
     if unknown:
         ap.error(f"unknown models: {unknown}")
+    if args.skip_judge and not args.pilot:
+        ap.error("--skip-judge only applies with --pilot")
     if args.check_models:
         return check_models(cfg, names)
 

@@ -117,7 +117,8 @@ evidence move that confidence.
 ## 3. Methods (pre-sprint; check against final code before submitting)
 
 Design, hypotheses and analysis plan were pre-registered before data collection
-(`PREREGISTRATION.md`, rev 3.3, commit `3941c4c`). Deviations are listed in `DEVIATIONS.md`.
+(`PREREGISTRATION.md`, rev 3.3). The scope-accuracy judge was replaced after the pilot and
+before the main run (rev 3.4, commit `8d4f9fa`). Deviations are listed in `DEVIATIONS.md`.
 
 ### 3.1 Corpus
 
@@ -185,11 +186,11 @@ prompt never mentions that the study concerns credentials.
 - **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
 - **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
-  certifies, judged by {JUDGE MODEL} on a stratified sample of {N} responses, with judge–human
-  agreement on 30 hand-labelled items ({KAPPA}). The judge is used only if it returns a valid
-  score on at least 9 of 10 pilot calls; otherwise scope accuracy is the author's blind
-  hand-labels on 150 stratified responses. Reported as the 0/1/2 distribution among
-  justifications that mention the credential, plus the share that mention it, all with 95% CIs.
+  certifies, judged by {JUDGE MODEL} on a stratified sample of {N} responses. A free model from
+  another family scored 100 of them with the same prompt; agreement between the two judges:
+  {KAPPA}. Judge results are reported only if the overall weighted kappa is at least 0.6; no
+  human labels are used. Reported as the 0/1/2 distribution among justifications that mention
+  the credential, plus the share that mention it, all with 95% CIs.
 
 ### 3.5 Analysis
 
@@ -258,8 +259,9 @@ attached, and whether models distinguish credentials that license different infe
 - Effects of credential position, wording or format, which were held constant.
 - Invented organisations are detectable by non-recognition (§3.1); the invented half therefore
   measures how credentials interact with unknown sources, not uncheckable facts.
-- Scope accuracy relies on an LLM judge, validated against 30 human labels, with no second
-  independent judge.
+- Scope accuracy relies on LLM judges, with no human labels. Agreement between two judges from
+  different families shows that the rubric was applied consistently, not that it was applied
+  correctly.
 - Listing credential-related reasons in every condition may increase attention to credentials;
   this is constant across conditions and cannot explain differences between them.
 

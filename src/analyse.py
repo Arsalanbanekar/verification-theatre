@@ -18,6 +18,9 @@ rev 3.3). This file implements them:
 - H3 is supported only if the upper bound of the 95% CI for the share of credential-mentioning
   justifications scored 2 is below 0.5 and its p_holm < .05. The full 0/1/2 distribution and the
   share mentioning the credential are reported with CIs.
+- Judge results (rev 3.4) are used only if the two judges' linear-weighted kappa on the 100
+  cross-checked responses is at least 0.6. Until then, or if it is lower, they are withheld: H3
+  is not tested and enters Holm with p = 1, so the family stays at eight.
 - Descriptive 95% CIs (acceptance by condition, discrimination index, scope shares): t-intervals
   over claims or pairs, clipped to the possible range.
 """
@@ -40,6 +43,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import grade as G
+from src import judge as J
 from src import runner as R
 
 REPO = R.REPO
@@ -75,36 +79,26 @@ def load_responses(raw_dir: Path, models) -> pd.DataFrame:
     return df
 
 
-def human_label_files(graded_dir: Path) -> list[tuple[int, Path]]:
-    out = []
-    for p in Path(graded_dir).glob("human_labels_*.csv"):
-        m = re.fullmatch(r"human_labels_(\d+)", p.stem)
-        if m:
-            out.append((int(m.group(1)), p))
-    return sorted(out)
+def scope_source(graded_dir: Path, cfg: dict, requested: str = "auto") -> tuple[str, dict]:
+    """(source, gate). Sources:
+    - "judge": the main judge's scores, used because the judges agree (§5, rev 3.4: kappa >= 0.6);
+    - "withheld": scores exist, but the cross-check is unfinished or kappa is below 0.6;
+    - "none": no scores.
+    requested="judge" uses the scores whatever the gate says; the summary flags that."""
+    gate = G.judge_agreement(cfg, graded_dir)
+    has_scores = any(j.get("valid") for j in G.judge_rows(graded_dir, "main", cfg).values())
+    if requested == "none" or not has_scores:
+        return "none", gate
+    if requested == "judge" or gate["status"] == "passed":
+        return "judge", gate
+    return "withheld", gate
 
 
-def scope_source(graded_dir: Path, pilot_dir: Path, requested: str = "auto") -> str:
-    """judge if it passed the pilot and has scores; human (the 150-item fallback) if it failed."""
-    if requested != "auto":
-        return requested
-    passed = G.pilot_judge_passed(pilot_dir)
-    if passed is False:
-        return "human" if human_label_files(graded_dir) else "none"
-    if any(j.get("valid") for j in G.latest_judgements(graded_dir).values()):
-        return "judge"
-    return "human" if any(n >= 150 for n, _ in human_label_files(graded_dir)) else "none"
-
-
-def load_scope(graded_dir: Path, source: str) -> pd.DataFrame:
+def load_scope(graded_dir: Path, source: str, cfg: dict) -> pd.DataFrame:
     rows = []
     if source == "judge":
-        rows = [{"response_id": k, "score": str(j["score"])} for k, j in G.latest_judgements(graded_dir).items()
+        rows = [{"response_id": k, "score": str(j["score"])} for k, j in G.judge_rows(graded_dir, "main", cfg).items()
                 if j.get("valid")]
-    elif source == "human":
-        files = human_label_files(graded_dir)
-        if files:  # the largest set: the 150-item fallback when it exists
-            rows = [{"response_id": r["response_id"], "score": r["human_score"]} for r in G.read_csv(files[-1][1])]
     return pd.DataFrame(rows, columns=["response_id", "score"])
 
 
@@ -291,8 +285,10 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
     add("H4", "interpreter vs none (C1, C2)", "acceptance", "pp", res, "all pairs")
     prim = [r for r in rows if r["primary"]]
     for key in ("p", "p_perm"):
-        for r, ph in zip(prim, holm([r[key] for r in prim])):
-            r[f"{key}_holm"] = ph
+        # rev 3.4: an untested H3 (judge results withheld) keeps its place in the family with p = 1
+        untested = [r["hypothesis"] == "H3" and isnan(r[key]) for r in prim]
+        for r, ph, u in zip(prim, holm([1.0 if u else r[key] for r, u in zip(prim, untested)]), untested):
+            r[f"{key}_holm"] = np.nan if u else ph
     for r in rows:
         r.setdefault("p_holm", np.nan)
         r.setdefault("p_perm_holm", np.nan)
@@ -842,7 +838,9 @@ def build_slots(ctx: dict) -> dict:
 
     # H3 (4.5)
     dist = ctx["h3_dist"]
-    if h3.get("n_pairs") and dist.get("n_judged"):
+    if ctx.get("scope_withheld"):
+        s["H3_SENTENCE"] = ctx["scope_withheld"]
+    elif h3.get("n_pairs") and dist.get("n_judged"):
         s["H3_SENTENCE"] = (
             f"Of the {dist['n_judged']} judged C1–C4 justifications on real-obscure pairs, {share_ci(dist, 'mention')} "
             f"mentioned the credential. Of those, {share_ci(dist, 'share_2')} described its scope correctly "
@@ -1024,26 +1022,44 @@ def reasoning_settings(raw_dir: Path, models, cfg) -> tuple[str, list[str]]:
     return "; ".join(parts) + "; logged with every call", problems
 
 
-def kappa_text(graded_dir: Path) -> str:
-    ag = Path(graded_dir) / "agreement_30.json"
-    if not ag.exists():
-        others = sorted(Path(graded_dir).glob("agreement_*.json"))
-        if not others:
-            return "not computed yet (run grade.py --import-human on the 30 hand-labels)"
-        ag = others[0]
-    a = json.loads(ag.read_text(encoding="utf-8"))
-    o = a.get("overall", {})
+def judge_text(cfg: dict) -> str:
+    """The main judge as §3.4 names it: model, provider and the blinding."""
+    j = J.judge_config(cfg, "main")
+    if not j.get("model_id"):
+        return "[the judges are not chosen yet: judges.main.model_id in models.yaml]"
+    route = ((j.get("route") or {}).get("order") or ["?"])[0]
+    return (f"`{j['model_id']}` via OpenRouter, served by {route} (temperature {j.get('temperature', 0.0):g}, blind to "
+            "model, condition and truth)")
+
+
+def kappa_text(gate: dict, cfg: dict) -> str:
+    """Agreement between the two judges (§5, rev 3.4), for the KAPPA slot."""
+    o = gate.get("overall") or {}
     if not o.get("n_items"):
-        return "not computed: no judge scores for the hand-labelled items"
-    fams = ", ".join(f"{k} {num(v.get('weighted_kappa_linear'), 2)} (n = {v.get('n_items')})"
-                     for k, v in a.get("by_family", {}).items())
-    return (f"linear-weighted κ = {num(o.get('weighted_kappa_linear'), 2)} on the {o.get('n_both_scored')} items both "
-            f"raters scored 0–2; exact agreement {pct(o.get('exact_agreement'))} over {o['n_items']} items; by model "
-            f"family: {fams}")
+        return "not computed yet: the cross-check judge has not scored any response"
+    c = J.judge_config(cfg, "crosscheck")
+    who = f"`{c['model_id']}`" if c.get("model_id") else "the cross-check judge"
+    fams = ", ".join(f"{k} {num(v.get('weighted_kappa_linear'), 2)} (n = {v.get('n_both_scored')})"
+                     for k, v in gate.get("by_family", {}).items())
+    return (f"linear-weighted κ = {num(o.get('weighted_kappa_linear'), 2)} between the judge and {who} on the "
+            f"{o.get('n_both_scored')} responses both scored 0–2, of {gate.get('n_crosschecked')} cross-checked; "
+            f"exact agreement {pct(o.get('exact_agreement'))}; by study-model family: {fams}")
+
+
+def withheld_text(gate: dict) -> str:
+    """The H3 sentence when judge results may not be reported (§5, rev 3.4)."""
+    if gate.get("status") == "failed":
+        return (f"Scope accuracy is not reported: the two judges' linear-weighted kappa was "
+                f"{num(gate.get('kappa'), 2)} on {gate['overall'].get('n_both_scored', 0)} responses both scored 0–2, "
+                "below the pre-registered 0.6, so H3 was not tested.")
+    return (f"Scope accuracy is not reported yet: the cross-check judge has scored {gate.get('n_crosschecked', 0)} of "
+            f"{gate.get('n_sample') or 100} responses, and judge results are reported only once the judges' "
+            "weighted kappa is known to be at least 0.6.")
 
 
 def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: Path, config: Path,
             scope_req: str = "auto") -> dict:
+    """pilot_dir is never read: pilot data, including the pilot's judge files, is excluded."""
     cfg = R.load_config(config)
     df = load_responses(raw_dir, list(cfg["models"]))
     if df.empty:
@@ -1051,8 +1067,9 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     models = [m for m in cfg["models"] if m in set(df["model"])]
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(SEED)
-    source = scope_source(graded_dir, pilot_dir, scope_req)
-    scope = load_scope(graded_dir, source)
+    source, gate = scope_source(graded_dir, cfg, scope_req)
+    forced = source == "judge" and gate["status"] != "passed"
+    scope = load_scope(graded_dir, source, cfg)
 
     fam, all_rows = {}, []
     for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
@@ -1128,26 +1145,25 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     models_paragraph = (f"{words.get(len(models), str(len(models)))} models ({len(df):,} of {n_planned:,} planned "
                         "cells completed: " + ", ".join(f"{m} {n}" for m, n in counts.items())
                         + f"; parse-failure rates: {pf_text})")
-    jid = cfg.get("judge", {}).get("model_id", "the judge")
-    judge_model = {"judge": f"`{jid}` (Gemma 4 31B via the Gemini API, temperature 0, blind to model, condition and truth)",
-                   "human": "the author's blind hand-labels (the judge failed the pilot check, so the §5 fallback applies)",
-                   "none": "[no scope scores yet]"}[source]
-    n_scored = int(len(df.merge(scope, on="response_id"))) if not scope.empty else 0
+    in_df = set(df["response_id"])
+    n_scored = sum(1 for k, j in G.judge_rows(graded_dir, "main", cfg).items() if j.get("valid") and k in in_df)
     scope_md = dist_table_md(sdist, "real_obscure")
     citation_md = table_md(rates[rates["scope"] == "pooled"] if not rates.empty else rates,
                            ["condition", "n", "credential_citation_rate", "abstention_rate", "mean_confidence"],
                            ["Condition", "n", "credential-citation rate", "abstention rate", "mean confidence"],
                            {"credential_citation_rate": pct, "abstention_rate": pct, "mean_confidence": lambda v: num(v, 0)})
     ctx = {"fam": fam, "h1_false": h1_false, "h5": h5r, "disc_real": dreal, "models": models, "c0": c0,
-           "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_model,
-           "n_judged": str(n_scored), "kappa": kappa_text(graded_dir), "scope_md": scope_md, "citation_md": citation_md,
-           "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4")}
+           "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_text(cfg),
+           "n_judged": str(n_scored), "kappa": kappa_text(gate, cfg), "scope_md": scope_md, "citation_md": citation_md,
+           "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4"),
+           "scope_withheld": withheld_text(gate) if source == "withheld" else ""}
     slots = build_slots(ctx)
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
     synthetic = bool(df["synthetic"].any())
     notes = draft_notes(draft_text)
-    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes)
+    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
+                             gate=gate, forced=forced)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1156,7 +1172,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
         (out / "REPORT_DRAFT.filled.md").write_text(banner + filled_draft(draft_text, entries), encoding="utf-8",
                                                      newline="\n")
     return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "fam": fam,
-            "source": source, "figures": fig_paths, "problems": setting_problems}
+            "source": source, "gate": gate, "forced": forced, "figures": fig_paths, "problems": setting_problems}
 
 
 def dist_row(sdist: pd.DataFrame, scope_name: str, ctype: str, conds: str) -> dict:
@@ -1196,13 +1212,28 @@ def draft_notes(draft_text: str) -> list[str]:
     return notes
 
 
-def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=()) -> str:
+def gate_line(gate: dict | None) -> str:
+    """The §5 (rev 3.4) judge-agreement gate in one phrase."""
+    g = gate or {}
+    k, n = num(g.get("kappa"), 2), (g.get("overall") or {}).get("n_both_scored", 0)
+    return {"passed": f"the judges' weighted kappa is {k} on {n} responses, at least 0.6: judge results are reported",
+            "failed": f"the judges' weighted kappa is {k} on {n} responses, below 0.6: judge results are withheld",
+            "pending": f"the cross-check has {g.get('n_crosschecked', 0)} of {g.get('n_sample') or 100} responses: judge "
+                       "results are withheld until the kappa is known",
+            "none": "no main-judge scores yet"}[g.get("status", "none")]
+
+
+def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
+                   gate=None, forced=False) -> str:
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
     lines += [f"Generated {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC by `src/analyse.py` at commit "
               f"`{R.git_commit()}` from `{raw_dir}`: {len(df)} completed cells; models "
-              f"{', '.join(sorted(df['model'].unique()))}. Scope-accuracy source: **{source}**.", ""]
+              f"{', '.join(sorted(df['model'].unique()))}. Scope-accuracy source: **{source}** ({gate_line(gate)}).", ""]
+    if forced:
+        lines += ["> **JUDGE RESULTS FORCED (`--scope-source judge`).** The pre-registered gate (§5, rev 3.4) has not "
+                  "passed, so none of the scope-accuracy numbers below may be reported as results.", ""]
     stamps = sorted(t for t in df["timestamp_utc"] if t)
     if stamps:
         lines += [f"Responses collected from {stamps[0][:16].replace('T', ' ')} to {stamps[-1][:16].replace('T', ' ')} "
@@ -1226,9 +1257,9 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "- README and Appendix A: say when the data were collected (dates above); collection before the "
               "sprint (13–15 Nov 2026) must be disclosed.",
               "- §4.8: use the per-model table and the scale comparison below.", *notes]
-    if source == "human":
-        lines += ["- §3.4: scope accuracy comes from the author's 150 hand-labels, not the judge; reword the sentence "
-                  "\"judged by … with judge–human agreement …\" to match."]
+    if source == "withheld":
+        lines += ["- §3.4 and §4.5: judge results are withheld (" + gate_line(gate) + "). Give the kappa, say that H3 "
+                  "was not tested, and leave out the scope-accuracy table and examples."]
     lines += [""]
     flags = []
     for key, hyps in ((("pooled", "real_obscure"), ("H1", "H2", "H2b", "H3")), (("pooled", "all"), ("H4",))):
@@ -1260,10 +1291,21 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "robustness check: with n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach "
               "p_holm < 0.05 over eight tests. `primary_tests.csv` has every model and claim type.", ""]
     h3 = find(fam[("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    verdict = (f"Judge results are withheld: {withheld_text(gate or {})}" if source == "withheld" else
+               f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}")
     lines += ["## Scope accuracy (H3)", "",
               "Rule (§7, rev 3.3): H3 is supported only if the upper bound of the 95% CI for the share of "
-              "credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05. "
-              f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}", ""]
+              "credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05. Rev 3.4 (§5): "
+              "judge results are reported only if the two judges' weighted kappa is at least 0.6; otherwise H3 is "
+              f"not tested and enters Holm with p = 1. Now: {gate_line(gate)}. {verdict}", ""]
+    if gate and (gate.get("overall") or {}).get("n_items"):
+        o = gate["overall"]
+        lines += [f"Judges' agreement on the cross-check sample: linear-weighted kappa {num(o['weighted_kappa_linear'], 2)} "
+                  f"(n = {o['n_both_scored']} both scored 0–2); Cohen's kappa over four categories "
+                  f"{num(o['cohen_kappa_4cat'], 2)}; exact agreement {pct(o['exact_agreement'])}; N/A agreement "
+                  f"{pct(o['na_agreement'])}. By study-model family: "
+                  + ", ".join(f"{f} {num(v['weighted_kappa_linear'], 2)} (n = {v['n_both_scored']})"
+                              for f, v in gate.get("by_family", {}).items()) + ".", ""]
     for ctype in ("real_obscure", "invented", "all"):
         lines += [dist_table_md(sdist, ctype), ""]
     lines += ["Per model: `scope_distribution.csv`. Figure 3 shows raw shares of all judged justifications, "
@@ -1318,14 +1360,17 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-dir", type=Path, default=DATA / "pilot")
     ap.add_argument("--out", type=Path, default=DATA / "results")
     ap.add_argument("--draft", type=Path, default=REPO / "REPORT_DRAFT.md")
-    ap.add_argument("--scope-source", choices=("auto", "judge", "human", "none"), default="auto")
+    ap.add_argument("--scope-source", choices=("auto", "judge", "none"), default="auto",
+                    help="auto follows the §5 gate; judge forces the judge's scores in (flagged as not reportable)")
     a = ap.parse_args(argv)
     res = analyse(a.raw_dir, a.graded_dir, a.out, a.pilot_dir, a.draft, a.config, a.scope_source)
     slots = [e for e in res["entries"] if e["slot"] != "_INSTRUCTION"]
     missing = [e for e in slots if e["text"] == NO_VALUE]
     print(f"results -> {a.out}")
-    print(f"  scope-accuracy source: {res['source']}; {len(slots)} draft slots filled automatically, "
-          f"{len(missing)} need a hand fill")
+    print(f"  scope-accuracy source: {res['source']} ({gate_line(res['gate'])}); {len(slots)} draft slots filled "
+          f"automatically, {len(missing)} need a hand fill")
+    if res["forced"]:
+        print("  JUDGE RESULTS FORCED: the pre-registered gate has not passed; do not report them")
     for e in missing:
         print(f"  by hand: {e['placeholder'][:70]} (line {e['line']})")
     for p in res["problems"]:

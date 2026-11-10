@@ -2,7 +2,7 @@
 before real data exists (CLAUDE.md: write the analysis against fake data first).
 
   python src/synthetic.py --out data/synthetic/raw --scenario effect   (or null)
-  python src/synthetic.py --graded-dir data/synthetic/graded           (also grade it, with fake judge scores)
+  python src/synthetic.py --graded-dir data/synthetic/graded           (also grade it, with fake scores from both judges)
 
 Every line carries "synthetic": true. Scenarios:
 - null:   acceptance depends on claim type and truth only; marks, conditions and the interpreter
@@ -103,35 +103,40 @@ def generate(out_dir: Path, scenario: str = "effect", seed: int = 0, cfg: dict |
     return counts
 
 
-def synthetic_judgements(graded_dir: Path, scenario: str = "effect", seed: int = 0) -> int:
-    """Judge scores for the responses in graded_dir/judge_sample.csv: mostly 0 when the mark is read
-    as support (effect), evenly spread in the null scenario."""
-    import csv
+def synthetic_judgements(graded_dir: Path, scenario: str = "effect", seed: int = 0, cfg: dict | None = None,
+                         crosscheck_agree: float = 0.9) -> int:
+    """Fake scores from both judges (§5, rev 3.4). Main judge: every response in judge_sample.csv,
+    mostly 0 in the effect scenario (the mark read as support), evenly spread in the null scenario.
+    Cross-check: the 100 in crosscheck_sample.csv (drawn here as grade.py would), matching the main
+    judge's score with probability crosscheck_agree and another score otherwise."""
+    from src import grade as G
+    cfg = cfg or R.load_config(R.REPO / "models.yaml")
     graded_dir = Path(graded_dir)
     rng = random.Random(f"{seed}|judge|{scenario}")
-    with open(graded_dir / "judge_sample.csv", encoding="utf-8") as f:
-        sample = list(csv.DictReader(f))
-    with open(graded_dir / "judgements.jsonl", "w", encoding="utf-8", newline="\n") as f:
-        for s in sample:
-            weights = [0.5, 0.25, 0.1, 0.15] if scenario == "effect" else [0.25, 0.25, 0.25, 0.25]
-            score = rng.choices(["0", "1", "2", "NA"], weights)[0]
-            f.write(json.dumps({"response_id": s["response_id"], "synthetic": True, "score": score,
-                                "valid": True, "reason": "synthetic"}) + "\n")
+    sample = G.read_csv(graded_dir / "judge_sample.csv")
+    weights = [0.5, 0.25, 0.1, 0.15] if scenario == "effect" else [0.25, 0.25, 0.25, 0.25]
+    main = {s["response_id"]: rng.choices(["0", "1", "2", "NA"], weights)[0] for s in sample}
+    cross_ids = G.crosscheck_sample_ids(cfg, graded_dir, sample)
+    for role, scores in (("main", main), ("crosscheck", {
+            i: main[i] if rng.random() < crosscheck_agree else rng.choice([x for x in ("0", "1", "2", "NA") if x != main[i]])
+            for i in cross_ids})):
+        with open(graded_dir / G.FILES[role][0], "w", encoding="utf-8", newline="\n") as f:
+            for rid, score in scores.items():
+                f.write(json.dumps({"response_id": rid, "synthetic": True, "role": role,
+                                    "judge_model_id": f"synthetic-{role}-judge", "score": score, "valid": True,
+                                    "reason": "synthetic"}) + "\n")
     return len(sample)
 
 
-def grade_with_fake_judge(raw_dir: Path, graded_dir: Path, scenario: str = "effect", seed: int = 0) -> int:
-    """Grade synthetic raw data and add fake judge scores, drawing the judge sample exactly as
-    grade.py --judge would. No API call is made."""
+def grade_with_fake_judge(raw_dir: Path, graded_dir: Path, scenario: str = "effect", seed: int = 0,
+                          crosscheck_agree: float = 0.9) -> int:
+    """Grade synthetic raw data and add fake scores from both judges, drawing the samples exactly as
+    grade.py --judge and --crosscheck would. No API call is made."""
     from src import grade as G
     cfg = R.load_config(R.REPO / "models.yaml")
     rows = G.grade_metrics(cfg, Path(raw_dir), Path(graded_dir))
-    jcfg = cfg["judge"]
-    sample = G.stratified_sample(G.judge_pool(rows), int(jcfg.get("sample_size", 600)), int(jcfg.get("seed", 0)))
-    G.write_csv(Path(graded_dir) / "judge_sample.csv",
-                [{"response_id": r["response_id"], "model": r["model"], "condition": r["condition"],
-                  "claim_type": r["claim_type"]} for r in sample], ["response_id", "model", "condition", "claim_type"])
-    return synthetic_judgements(graded_dir, scenario, seed)
+    G.judge_sample_ids(cfg, Path(graded_dir), rows)
+    return synthetic_judgements(graded_dir, scenario, seed, cfg, crosscheck_agree)
 
 
 def main(argv=None) -> int:
@@ -140,13 +145,13 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=R.DATA / "synthetic" / "raw")
     ap.add_argument("--scenario", choices=("effect", "null"), default="effect")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--graded-dir", type=Path, help="also grade it there and add fake judge scores (rehearsal)")
+    ap.add_argument("--graded-dir", type=Path, help="also grade it there and add fake scores from both judges")
     a = ap.parse_args(argv)
     counts = generate(a.out, a.scenario, a.seed)
     print(f"synthetic {a.scenario} data -> {a.out}: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
     if a.graded_dir:
         n = grade_with_fake_judge(a.out, a.graded_dir, a.scenario, a.seed)
-        print(f"fake judge scores for {n} sampled responses -> {a.graded_dir / 'judgements.jsonl'}")
+        print(f"fake scores from both judges for {n} sampled responses -> {a.graded_dir}")
     return 0
 
 

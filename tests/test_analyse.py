@@ -153,10 +153,12 @@ def test_outputs_are_written(scenario):
 
 def test_draft_states_the_current_facts():
     text = " ".join(DRAFT.read_text(encoding="utf-8").split())           # independent of line wrapping
-    for stale in ("Gemini 3.1", "Gemini 3.6", "spot check", "Spot check", "rev 3.1", "data/results_summary.md"):
+    for stale in ("Gemini 3.1", "Gemini 3.6", "spot check", "Spot check", "rev 3.1", "data/results_summary.md",
+                  "Gemma", "hand-label", "9 of 10 pilot calls", "judge–human", "human labels,"):
         assert stale not in text, stale
-    for fact in ("rev 3.3", "Gemini 3.5 Flash-Lite", "at least 9 of 10 pilot calls", "paired t-tests over pairs",
-                 "Holm correction over the eight", "upper bound of the 95% CI", "data/results/results_summary.md"):
+    for fact in ("rev 3.3", "rev 3.4", "Gemini 3.5 Flash-Lite", "weighted kappa is at least 0.6", "no human labels",
+                 "paired t-tests over pairs", "Holm correction over the eight", "upper bound of the 95% CI",
+                 "data/results/results_summary.md"):
         assert fact in text, fact
 
 
@@ -292,23 +294,42 @@ def test_h3_rule(row, supported, phrase):
 
 # ---------------------------------------------------------------- inputs
 
-def test_scope_source_follows_the_pilot_rule(tmp_path):
-    graded, pilot = tmp_path / "graded", tmp_path / "pilot"
-    graded.mkdir()
-    pilot.mkdir()
-    assert A.scope_source(graded, pilot) == "none"
-    (graded / "judgements.jsonl").write_text(json.dumps({"response_id": "x", "score": "2", "valid": True}) + "\n",
-                                             encoding="utf-8")
-    assert A.scope_source(graded, pilot) == "judge"
-    (pilot / "pilot_report.json").write_text(json.dumps({"judge_passed": False}), encoding="utf-8")
-    assert A.scope_source(graded, pilot) == "none"                         # failed judge, no hand-labels yet
-    G.write_csv(graded / "human_labels_30.csv", [{"response_id": "x", "human_score": "1"}],
-                ["response_id", "human_score"])
-    G.write_csv(graded / "human_labels_150.csv", [{"response_id": "y", "human_score": "0"}],
-                ["response_id", "human_score"])
-    assert A.scope_source(graded, pilot) == "human"
-    assert A.load_scope(graded, "human").to_dict("records") == [{"response_id": "y", "score": "0"}]   # the 150 set
-    assert A.scope_source(graded, pilot, "judge") == "judge"
+def test_scope_source_follows_the_judge_gate(scenario, tmp_path):
+    root, _ = scenario("effect")
+    cfg = R.load_config(R.REPO / "models.yaml")
+    graded = tmp_path / "graded"
+    shutil.copytree(root / "graded", graded)
+    source, gate = A.scope_source(graded, cfg)
+    assert (source, gate["status"]) == ("judge", "passed") and gate["kappa"] >= 0.6   # the fake judges agree
+    path = graded / "judge_crosscheck.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    path.write_text("".join(lines[:50]), encoding="utf-8")
+    source, gate = A.scope_source(graded, cfg)
+    assert (source, gate["status"]) == ("withheld", "pending") and A.load_scope(graded, source, cfg).empty
+    assert A.scope_source(graded, cfg, "judge")[0] == "judge"             # forced; the summary flags it
+    (graded / "judge_main.jsonl").unlink()
+    assert A.scope_source(graded, cfg)[0] == "none"
+
+
+def test_withheld_judge_results_are_not_reported_and_holm_keeps_eight(tmp_path):
+    raw, graded = tmp_path / "raw", tmp_path / "graded"
+    S.generate(raw, "effect", seed=SEED)
+    S.grade_with_fake_judge(raw, graded, "effect", seed=SEED, crosscheck_agree=0.1)
+    res = run(tmp_path, raw, graded)
+    assert res["source"] == "withheld" and res["gate"]["status"] == "failed" and not res["forced"]
+    h3_text = res["slots"]["H3_SENTENCE"]
+    assert h3_text.startswith("Scope accuracy is not reported") and "below the pre-registered 0.6" in h3_text
+    rows = res["fam"][("pooled", "real_obscure")]
+    h3 = A.find(rows, "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    assert np.isnan(h3["p"]) and np.isnan(h3["p_holm"])
+    others = [r for r in rows if r["primary"] and r["hypothesis"] != "H3"]
+    assert len(others) == 7
+    assert np.allclose([r["p_holm"] for r in others], A.holm([r["p"] for r in others] + [1.0])[:-1])
+    summary = (tmp_path / "results" / "results_summary.md").read_text(encoding="utf-8")
+    assert "Scope-accuracy source: **withheld**" in summary and "Judge results are withheld" in summary
+    forced = A.analyse(raw, graded, tmp_path / "forced", tmp_path / "no_pilot", DRAFT, R.REPO / "models.yaml", "judge")
+    assert forced["forced"] and "JUDGE RESULTS FORCED" in (tmp_path / "forced" / "results_summary.md").read_text(
+        encoding="utf-8")
 
 
 def test_partial_data_runs_and_pilot_files_are_ignored(scenario, tmp_path):

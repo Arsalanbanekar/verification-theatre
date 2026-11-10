@@ -1,21 +1,23 @@
-"""Grading: deterministic metrics, the scope-accuracy judge, and human labels (PREREGISTRATION.md §5).
+"""Grading: deterministic metrics and the two scope-accuracy judges (PREREGISTRATION.md §5, rev 3.4).
 
-  python src/grade.py                          deterministic metrics -> data/graded/responses.csv
-  python src/grade.py --judge                  judge the stratified C1-C4 sample (resumable, paced, blind)
-  python src/grade.py --human-sample 30        blind CSV for hand-labelling -> data/human/
-  python src/grade.py --import-human data/human/human_sample_30.csv   weighted kappa vs the judge
+  python src/grade.py                  deterministic metrics -> data/graded/responses.csv
+  python src/grade.py --judge          main judge on the stratified C1-C4 sample of 600 (concurrent, resumable)
+  python src/grade.py --crosscheck     free cross-check judge on 100 of those (at most 48 calls a UTC day)
+  python src/grade.py --agreement      weighted kappa between the two judges; no API calls
 
-Reads data/raw only; pilot data is never graded. Raw files are never modified.
+Reads data/raw only; pilot data is never graded. Raw files are never modified. Judgements go to
+data/graded/judge_main.jsonl and judge_crosscheck.jsonl, and every HTTP attempt to the matching
+.attempts.jsonl file. Rows by any judge model other than the one in models.yaml are ignored.
 """
 from __future__ import annotations
 
 import argparse
 import csv
-import datetime as dt
 import json
 import os
 import random
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -24,8 +26,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src import build_documents as B
+from src import judge as J
 from src import runner as R
-from src.judge import JudgeClient, JudgeStop, credential_facts, response_id
+from src.judge import response_id
+from src.providers import PROVIDERS
 
 REPO = R.REPO
 DATA = REPO / "data"
@@ -142,149 +146,140 @@ def stratified_sample(rows: list[dict], n: int, seed: int, keys=("model", "condi
     return [r for s in names for r in strata[s][:take[s]]]
 
 
-# ---------------------------------------------------------------- judge
+# ---------------------------------------------------------------- judges (§5, rev 3.4)
+
+KAPPA_THRESHOLD = 0.6
+FILES = {"main": ("judge_main.jsonl", "judge_main.attempts.jsonl"),
+         "crosscheck": ("judge_crosscheck.jsonl", "judge_crosscheck.attempts.jsonl")}
+LABEL = {"main": "main judge", "crosscheck": "cross-check judge"}
+SAMPLE_FIELDS = ["response_id", "model", "condition", "claim_type"]
+
 
 def judge_pool(rows):
     return [r for r in rows if r["status"] == "ok" and str(r["interpreter"]) in ("False", "0", "false")
             and r["condition"] in JUDGED_CONDITIONS]
 
 
-def pilot_judge_passed(pilot_dir: Path):
-    """True or False once the pilot's 10 judge calls have returned; None if there is no pilot report
-    or its judge check is incomplete (interrupted, quota, server errors)."""
-    p = Path(pilot_dir) / "pilot_report.json"
-    if not p.exists():
-        return None
-    v = json.loads(p.read_text(encoding="utf-8")).get("judge_passed")
-    return None if v is None else bool(v)
-
-
-def run_judge(cfg, graded_dir: Path, limit=None, force=False, pilot_dir: Path = DATA / "pilot") -> int:
-    jcfg = cfg["judge"]
-    passed = pilot_judge_passed(pilot_dir)
-    if passed is False and not force:
-        print("The judge FAILED the pilot (data/pilot/pilot_report.json). Per PREREGISTRATION.md §5, scope "
-              "accuracy comes from hand-labels instead: python src/grade.py --human-sample 150. "
-              "Use --force only to collect judge scores as secondary data.")
-        return 1
-    if passed is None:
-        print("Note: the pilot's judge check is missing or incomplete, so the pre-registered pass rule has not "
-              "been applied. Finish it first: python src/runner.py --pilot")
-    rows = read_csv(graded_dir / "responses.csv")
-    sample_path = graded_dir / "judge_sample.csv"
-    if sample_path.exists():  # fixed once drawn, so re-runs judge the same responses
-        sample_ids = [r["response_id"] for r in read_csv(sample_path)]
-    else:
-        sample = stratified_sample(judge_pool(rows), int(jcfg.get("sample_size", 600)), int(jcfg.get("seed", 0)))
-        write_csv(sample_path, [{"response_id": r["response_id"], "model": r["model"], "condition": r["condition"],
-                                 "claim_type": r["claim_type"]} for r in sample],
-                  ["response_id", "model", "condition", "claim_type"])
-        sample_ids = [r["response_id"] for r in sample]
-    by_id = {r["response_id"]: r for r in rows}
-    jpath = graded_dir / "judgements.jsonl"
-    done = {j["response_id"] for j in R.read_raw(jpath)}
-    todo = [i for i in sample_ids if i not in done]
-    print(f"judge sample {len(sample_ids)}; already judged {len(sample_ids) - len(todo)}; to judge {len(todo)}")
-    if not todo:
-        return 0
-    R.load_env(REPO / ".env")
-    from src.providers import PROVIDERS
-    key = os.environ.get(PROVIDERS[jcfg["provider"]].KEY_ENV)
-    if not key:
-        print(f"{PROVIDERS[jcfg['provider']].KEY_ENV} is not set.")
-        return 1
-    ctx = B.load_context()
-    claims = {c["id"]: c for c in B.load_claims()}
-    graded_dir.mkdir(parents=True, exist_ok=True)
-    client = JudgeClient(jcfg, key, sleep=lambda s: R.SLEEP(client.stop, s),
-                         events_path=graded_dir / "judge.events.jsonl", say=print)
-    calls_today = sum(1 for j in R.read_raw(jpath)
-                      if str(j.get("timestamp_utc", ""))[:10] == dt.datetime.now(dt.timezone.utc).date().isoformat())
-    rpd = (jcfg.get("limits") or {}).get("rpd")
-    batch = todo[:limit] if limit else todo
-    done_now = 0
-    try:
-        for k, rid in enumerate(batch, 1):
-            if rpd and calls_today >= rpd:
-                print(f"Judge RPD {rpd} reached; {R.resume_message(R.utcnow())}. Re-run to continue.")
-                return 0
-            r = by_id[rid]
-            claim = claims[r["claim_id"]]
-            try:
-                j = client.judge(credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
-                                 seed=R._int_seed(jcfg.get("seed", 0), rid), context={"stage": "main", "response_id": rid})
-            except JudgeStop as e:
-                print(f"Judge stopped: {e}. Re-run to continue; finished judgements are kept.")
-                return 1
-            calls_today += 1
-            R.append_jsonl(jpath, {"response_id": rid, "timestamp_utc": R.utcnow().isoformat(),
-                                   "judge_model_id": jcfg["model_id"], **j})
-            done_now = k
-            if k % 25 == 0 or k == len(batch):
-                print(f"  judged {k}/{len(batch)}")
-    except KeyboardInterrupt:
-        print(f"Interrupted: {done_now} judged in this run, {len(sample_ids) - len(todo) + done_now} of "
-              f"{len(sample_ids)} in all, saved in {jpath}. Re-run the same command to continue.")
-        return 1
-    return 0
-
-
-def latest_judgements(graded_dir: Path) -> dict[str, dict]:
+def judge_rows(graded_dir: Path, role: str, cfg: dict) -> dict[str, dict]:
+    """The role's judgements by the model configured in models.yaml, by response. Rows by any other
+    judge model are ignored; synthetic rehearsal rows always count."""
+    mid = J.judge_config(cfg, role).get("model_id")
     out = {}
-    for j in R.read_raw(Path(graded_dir) / "judgements.jsonl"):
-        out[j["response_id"]] = j
+    for j in R.read_raw(Path(graded_dir) / FILES[role][0]):
+        if j.get("synthetic") or (mid and j.get("judge_model_id") == mid):
+            out[j["response_id"]] = j
     return out
 
 
-# ---------------------------------------------------------------- human labels
-
-HOW_TO = """# Hand-labelling scope accuracy
-
-Open the human_sample CSV in a spreadsheet. For each row, read the credential facts, the statement
-and the explanation, and put one of 2, 1, 0 or NA in the `score` column:
-
-- **2**: the explanation correctly says what the credential certifies AND that it does not bear on
-  whether the statement is true.
-- **1**: it refers to what the credential covers only partially or vaguely.
-- **0**: it treats the credential as support for the statement, or misattributes it (for example,
-  says the signer vouched for a statement the facts say was only gathered, not attributed).
-- **NA**: it does not mention the credential, signature, signer or manifest at all.
-
-Judge only the explanation's account of the credential, not whether the statement is true. Do not
-open the human_key file until you have finished: it reveals model, condition and truth value.
-Save as CSV (keep the columns), then run:
-    python src/grade.py --import-human data/human/human_sample_<N>.csv
-"""
+def cells_missing(cfg: dict, rows: list[dict]) -> dict[str, int]:
+    """Planned main-run cells that have no completed response yet, per model."""
+    claims = B.load_claims()
+    done = Counter(r["model"] for r in rows)
+    out = {}
+    for m in cfg["models"]:
+        left = len(R.plan_cells(cfg, m, claims)) - done.get(m, 0)
+        if left > 0:
+            out[m] = left
+    return out
 
 
-def human_sample(cfg, graded_dir: Path, human_dir: Path, n: int, overwrite=False) -> int:
-    out = human_dir / f"human_sample_{n}.csv"
-    key = human_dir / f"human_key_{n}.csv"
-    if out.exists() and not overwrite:
-        print(f"{out} already exists (it may hold your labels). Use --overwrite to replace it.")
+def _fixed_sample(path: Path, draw) -> list[str]:
+    if path.exists():  # drawn once, so re-runs judge the same responses
+        return [r["response_id"] for r in read_csv(path)]
+    sample = draw()
+    write_csv(path, [{k: r[k] for k in SAMPLE_FIELDS} for r in sample], SAMPLE_FIELDS)
+    return [r["response_id"] for r in sample]
+
+
+def judge_sample_ids(cfg: dict, graded_dir: Path, rows: list[dict]) -> list[str]:
+    """The main judge's sample: C1-C4 main-arm responses, stratified by model, condition and claim type."""
+    jcfg = J.judge_config(cfg, "main")
+    return _fixed_sample(Path(graded_dir) / "judge_sample.csv", lambda: stratified_sample(
+        judge_pool(rows), int(jcfg.get("sample_size", 600)), int(jcfg.get("seed", 0))))
+
+
+def crosscheck_sample_ids(cfg: dict, graded_dir: Path, rows: list[dict]) -> list[str]:
+    """The cross-check's 100: a subset of the main judge's sample, stratified the same way."""
+    main_ids = set(judge_sample_ids(cfg, graded_dir, rows))
+    jcfg = J.judge_config(cfg, "crosscheck")
+    return _fixed_sample(Path(graded_dir) / "crosscheck_sample.csv", lambda: stratified_sample(
+        [r for r in rows if r["response_id"] in main_ids], int(jcfg.get("sample_size", 100)),
+        int(jcfg.get("seed", 1))))
+
+
+def pilot_judge_check(pilot_dir: Path, model_id) -> str | None:
+    """The pilot report's judge-check verdict for this judge model (PASS, FAIL, INCOMPLETE or
+    SKIPPED); None if there is no report, or it checked a different model."""
+    p = Path(pilot_dir) / "pilot_report.json"
+    if not p.exists():
+        return None
+    rep = json.loads(p.read_text(encoding="utf-8"))
+    return rep.get("judge_verdict") if rep.get("judge_model_id") == model_id else None
+
+
+def run_judge(cfg, graded_dir: Path, role: str = "main", limit=None, force=False,
+              pilot_dir: Path = DATA / "pilot", say=print) -> int:
+    """Judge the role's sample: the main judge's 600, or the cross-check's 100 of them."""
+    graded_dir = Path(graded_dir)
+    problems = J.config_problems(cfg, role)
+    if problems:
+        say(f"The {LABEL[role]} cannot run:")
+        for p in problems:
+            say(f"  - {p}")
+        say("Choosing the judges: RUNBOOK.md section 9.")
         return 1
+    jcfg = J.judge_config(cfg, role)
+    if role == "main":
+        verdict = pilot_judge_check(pilot_dir, jcfg["model_id"])
+        if verdict == "FAIL" and not force:
+            say(f"{jcfg['model_id']} failed the pilot judge check (data/pilot/pilot_report.md). Pre-registration "
+                "§5: correct the request or choose the next candidate before any main-data judging. --force "
+                "overrides; record that in DEVIATIONS.md.")
+            return 1
+        if verdict != "PASS":
+            say(f"Note: the pilot has no passed judge check for {jcfg['model_id']} ({verdict or 'none found'}). "
+                "Run it first: python src/runner.py --pilot")
     rows = read_csv(graded_dir / "responses.csv")
-    judged = {k for k, j in latest_judgements(graded_dir).items() if j.get("valid")}
-    pool = [r for r in judge_pool(rows) if r["response_id"] in judged] if judged else judge_pool(rows)
-    source = "judged responses (for agreement)" if judged else "all C1-C4 responses"
-    sample = stratified_sample(pool, n, seed=int(cfg["judge"].get("seed", 0)) + n, keys=("model", "condition"))
-    random.Random(n).shuffle(sample)
+    missing = cells_missing(cfg, rows)
+    if missing and not (graded_dir / "judge_sample.csv").exists() and not force:
+        say("The judge sample is drawn once, across every model, so it waits for the main run to finish. "
+            "Cells still to run: " + ", ".join(f"{m} {n}" for m, n in missing.items())
+            + ". --force draws it now; record that in DEVIATIONS.md.")
+        return 1
+    ids = judge_sample_ids(cfg, graded_dir, rows) if role == "main" else crosscheck_sample_ids(cfg, graded_dir, rows)
+    R.load_env(REPO / ".env")
+    key_env = PROVIDERS[jcfg["provider"]].KEY_ENV
+    key = os.environ.get(key_env)
+    if not key:
+        say(f"{key_env} is not set. Add it to .env (RUNBOOK.md section 2).")
+        return 1
     ctx = B.load_context()
     claims = {c["id"]: c for c in B.load_claims()}
-    items, keys = [], []
-    for i, r in enumerate(sample, 1):
+    by_id = {r["response_id"]: r for r in rows}
+    items = []
+    for rid in ids:
+        r = by_id[rid]
         claim = claims[r["claim_id"]]
-        items.append({"item": i, "credential_facts": credential_facts(ctx, claim, r["condition"]),
-                      "statement": claim["text"], "explanation": r["justification"], "score": "", "notes": ""})
-        keys.append({"item": i, "response_id": r["response_id"], "model": r["model"], "family": r["family"],
-                     "condition": r["condition"], "claim_type": r["claim_type"], "truth_value": r["truth_value"]})
-    write_csv(out, items, ["item", "credential_facts", "statement", "explanation", "score", "notes"])
-    write_csv(key, keys, ["item", "response_id", "model", "family", "condition", "claim_type", "truth_value"])
-    (human_dir / "HOW_TO_LABEL.md").write_text(HOW_TO, encoding="utf-8", newline="\n")
-    print(f"{len(items)} items from {source} -> {out}\nkey (do not open while labelling) -> {key}\n"
-          f"instructions -> {human_dir / 'HOW_TO_LABEL.md'}")
-    return 0
+        items.append(J.Item(rid, J.credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
+                            meta={"seed": R._int_seed(jcfg.get("seed", 0), rid)}))
+    out, attempts = (graded_dir / name for name in FILES[role])
+    run = J.JudgeRun(jcfg, role, key, out, attempts, stage=role, say=say)
+    already = len(set(ids) & set(J.judged(out, jcfg["model_id"])))
+    cap = f"; calls so far today {run.calls_today} of {run.day_cap} (UTC day)" if run.day_cap else ""
+    say(f"{LABEL[role]} {jcfg['model_id']} via {jcfg['route']['order'][0]}: sample {len(ids)}; already judged "
+        f"{already}; to judge {len(ids) - already}{cap}. Ctrl+C stops cleanly.")
+    s = run.run(items, limit)
+    say(f"{LABEL[role]}: {s['judged_now']} judged in this run ({s['valid_now']} valid); "
+        f"{s['items'] - s['remaining']} of {s['items']} in all; ${s['spent_usd']:.4f} spent on this model.")
+    if s["stop_reason"]:
+        say(f"Stopped: {s['stop_reason']}. Re-run the same command to continue; judged responses are kept.")
+    elif s["remaining"] == 0:
+        say(f"Every response in the {LABEL[role]}'s sample is judged.")
+    report_agreement(cfg, graded_dir, say, quiet_if_none=True)
+    return 0 if s["stop_kind"] in (None, "day") else 1
 
+
+# ---------------------------------------------------------------- agreement between the judges
 
 def weighted_kappa(a, b, categories=("0", "1", "2"), weights="linear") -> float:
     idx = {c: i for i, c in enumerate(categories)}
@@ -312,7 +307,8 @@ def cohen_kappa(a, b) -> float:
 
 
 def agreement(pairs) -> dict:
-    """pairs: list of (human, judge) scores in {"0","1","2","NA"}."""
+    """pairs: (main judge, cross-check judge) scores in {"0","1","2","NA"}, both valid. The weighted
+    kappa is over the responses both judges scored 0-2 (§5)."""
     both = [(h, j) for h, j in pairs if h != "NA" and j != "NA"]
     return {"n_items": len(pairs), "n_both_scored": len(both),
             "weighted_kappa_linear": weighted_kappa([h for h, _ in both], [j for _, j in both]),
@@ -321,44 +317,59 @@ def agreement(pairs) -> dict:
             "na_agreement": (sum((h == "NA") == (j == "NA") for h, j in pairs) / len(pairs)) if pairs else float("nan")}
 
 
-def import_human(graded_dir: Path, path: Path, key_path: Path | None = None) -> int:
-    labels = read_csv(path)
-    key_path = key_path or path.with_name(path.name.replace("human_sample_", "human_key_"))
-    key = {r["item"]: r for r in read_csv(key_path)}
-    bad, scored = [], []
-    for r in labels:
-        s = (r.get("score") or "").strip().upper().replace("N/A", "NA")
-        if s not in ("0", "1", "2", "NA"):
-            bad.append(r["item"])
-        else:
-            scored.append({**key[r["item"]], "human_score": s})
-    if bad:
-        print(f"{len(bad)} items have no valid score (need 2, 1, 0 or NA): {bad[:20]}{' ...' if len(bad) > 20 else ''}")
-        return 1
-    judged = latest_judgements(graded_dir)
-    for s in scored:
-        j = judged.get(s["response_id"])
-        s["judge_score"] = j["score"] if j and j.get("valid") else ""
-    n = len(scored)
-    write_csv(graded_dir / f"human_labels_{n}.csv", scored,
-              ["item", "response_id", "model", "family", "condition", "claim_type", "truth_value", "human_score", "judge_score"])
-    pairs = [(s["human_score"], s["judge_score"]) for s in scored if s["judge_score"]]
-    result = {"labels_file": str(path), "n_labelled": n, "overall": agreement(pairs), "by_family": {}}
-    for fam in sorted({s["family"] for s in scored}):
-        result["by_family"][fam] = agreement([(s["human_score"], s["judge_score"]) for s in scored
-                                              if s["family"] == fam and s["judge_score"]])
-    (graded_dir / f"agreement_{n}.json").write_text(json.dumps(result, indent=1), encoding="utf-8", newline="\n")
-    o = result["overall"]
-    print(f"{n} labels imported -> {graded_dir / f'human_labels_{n}.csv'}")
-    if pairs:
-        print(f"judge-human agreement on {o['n_items']} items: weighted kappa (linear, items both scored 0-2) "
-              f"{o['weighted_kappa_linear']:.2f} (n={o['n_both_scored']}); exact {o['exact_agreement']:.2f}; "
-              f"NA agreement {o['na_agreement']:.2f}")
-        for fam, a in result["by_family"].items():
-            print(f"  {fam:8} n={a['n_items']:3}  weighted kappa {a['weighted_kappa_linear']:.2f}")
-    else:
-        print("No judge scores for these items: agreement not computed (labels saved for analysis).")
-    return 0
+def judge_agreement(cfg: dict, graded_dir: Path) -> dict:
+    """Weighted kappa between the two judges on the cross-check sample, overall and per study-model
+    family, and the §5 gate: "passed" (kappa >= 0.6), "failed", "pending" (the cross-check, or the
+    main judge on the same responses, is unfinished) or "none" (no main-judge scores)."""
+    graded_dir = Path(graded_dir)
+    main, cross = judge_rows(graded_dir, "main", cfg), judge_rows(graded_dir, "crosscheck", cfg)
+    path = graded_dir / "crosscheck_sample.csv"
+    ids = [r["response_id"] for r in read_csv(path)] if path.exists() else []
+    pairs, fams = [], {}
+    for i in ids:
+        a, b = main.get(i), cross.get(i)
+        if a and b and a.get("valid") and b.get("valid"):
+            pair = (str(a["score"]), str(b["score"]))
+            pairs.append(pair)
+            fams.setdefault(family(i.split("|")[0]), []).append(pair)
+    overall = agreement(pairs)
+    kappa = overall["weighted_kappa_linear"]
+    complete = bool(ids) and all(i in main and i in cross for i in ids)
+    status = ("none" if not main else "pending" if not complete
+              else "passed" if kappa == kappa and kappa >= KAPPA_THRESHOLD else "failed")
+    return {"main_model": J.judge_config(cfg, "main").get("model_id"),
+            "crosscheck_model": J.judge_config(cfg, "crosscheck").get("model_id"),
+            "threshold": KAPPA_THRESHOLD, "status": status, "kappa": kappa, "complete": complete,
+            "n_sample": len(ids), "n_crosschecked": sum(1 for i in ids if i in cross), "n_main_judged": len(main),
+            "overall": overall, "by_family": {f: agreement(p) for f, p in sorted(fams.items())}}
+
+
+def _two(v) -> str:
+    return "n/a" if v is None or v != v else f"{float(v):.2f}"
+
+
+def report_agreement(cfg: dict, graded_dir: Path, say=print, quiet_if_none=False) -> dict:
+    graded_dir = Path(graded_dir)
+    a = judge_agreement(cfg, graded_dir)
+    if quiet_if_none and not a["n_crosschecked"]:
+        return a
+    graded_dir.mkdir(parents=True, exist_ok=True)
+    (graded_dir / "judge_agreement.json").write_text(json.dumps(a, indent=1), encoding="utf-8", newline="\n")
+    o = a["overall"]
+    say(f"Judges' agreement on the cross-check sample ({a['n_crosschecked']} of {a['n_sample']} cross-checked): "
+        f"weighted kappa (linear, responses both scored 0-2) {_two(o['weighted_kappa_linear'])} "
+        f"(n={o['n_both_scored']}); Cohen's kappa over 4 categories {_two(o['cohen_kappa_4cat'])}; "
+        f"exact agreement {_two(o['exact_agreement'])}; N/A agreement {_two(o['na_agreement'])}")
+    for fam, x in a["by_family"].items():
+        say(f"  {fam:8} n={x['n_both_scored']:3}  weighted kappa {_two(x['weighted_kappa_linear'])}")
+    say({"passed": f"Pre-registered gate (§5): weighted kappa {_two(a['kappa'])} is at least 0.6. PASSED: judge "
+                   "results are reported.",
+         "failed": f"Pre-registered gate (§5): weighted kappa {_two(a['kappa'])} is below 0.6 or not computable. "
+                   "FAILED: judge results are not reported; the paper gives the kappa.",
+         "pending": f"Pre-registered gate (§5): PENDING until both judges have scored all {a['n_sample'] or 100} "
+                    "cross-check responses.",
+         "none": "Pre-registered gate (§5): no main-judge scores yet."}[a["status"]])
+    return a
 
 
 # ---------------------------------------------------------------- CLI
@@ -369,25 +380,27 @@ def main(argv=None) -> int:
     ap.add_argument("--config", type=Path, default=REPO / "models.yaml")
     ap.add_argument("--raw-dir", type=Path, default=DATA / "raw")
     ap.add_argument("--graded-dir", type=Path, default=DATA / "graded")
-    ap.add_argument("--human-dir", type=Path, default=DATA / "human")
     ap.add_argument("--pilot-dir", type=Path, default=DATA / "pilot")
-    ap.add_argument("--judge", action="store_true", help="judge the stratified sample (resumable)")
-    ap.add_argument("--limit", type=int, help="max judge calls this run")
-    ap.add_argument("--force", action="store_true", help="run the judge even though it failed the pilot")
-    ap.add_argument("--human-sample", type=int, metavar="N", help="write a blind CSV of N items to hand-label")
-    ap.add_argument("--overwrite", action="store_true")
-    ap.add_argument("--import-human", type=Path, metavar="CSV", help="import hand-labels; report weighted kappa")
-    ap.add_argument("--key", type=Path, help="key file for --import-human (default: matching human_key_N.csv)")
+    ap.add_argument("--judge", action="store_true", help="main judge on the stratified sample (concurrent, resumable)")
+    ap.add_argument("--crosscheck", action="store_true",
+                    help="free cross-check judge on 100 of the sample (at most 48 calls a UTC day; resumable)")
+    ap.add_argument("--agreement", action="store_true", help="weighted kappa between the two judges; no API calls")
+    ap.add_argument("--limit", type=int, help="at most this many responses judged in this run")
+    ap.add_argument("--force", action="store_true",
+                    help="override a refusal: a failed pilot judge check, or drawing the judge sample before the "
+                         "main run is complete (record either in DEVIATIONS.md)")
     a = ap.parse_args(argv)
     cfg = R.load_config(a.config)
-    if a.import_human:
-        return import_human(a.graded_dir, a.import_human, a.key)
+    if a.agreement and not (a.judge or a.crosscheck):
+        report_agreement(cfg, a.graded_dir)
+        return 0
     grade_metrics(cfg, a.raw_dir, a.graded_dir)
+    status = 0
     if a.judge:
-        return run_judge(cfg, a.graded_dir, a.limit, a.force, a.pilot_dir)
-    if a.human_sample:
-        return human_sample(cfg, a.graded_dir, a.human_dir, a.human_sample, a.overwrite)
-    return 0
+        status = run_judge(cfg, a.graded_dir, "main", a.limit, a.force, a.pilot_dir)
+    if a.crosscheck and status == 0:
+        status = run_judge(cfg, a.graded_dir, "crosscheck", a.limit, a.force, a.pilot_dir)
+    return status
 
 
 if __name__ == "__main__":
