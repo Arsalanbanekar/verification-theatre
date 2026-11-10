@@ -71,7 +71,8 @@ def test_injected_effects_are_recovered(scenario):
     assert s["H4_SENTENCE"].startswith("A plain-language interpreter stating each credential's scope reduced")
     assert "rose by" in s["DISCRIMINATION"] and "did not reliably move" in s["DISCRIMINATION"]
     assert s["H2_SENTENCE"].startswith("No reliable difference")
-    assert "fewer than half" in s["H3_SENTENCE"]
+    assert s["H3_SENTENCE"].endswith("so H3 is supported.") and "mentioned the credential" in s["H3_SENTENCE"]
+    assert A.h3_verdict(h["H3"])[0] and h["H3"]["ci_high"] < 0.5
     assert s["RESULT_PHRASE"].startswith("that credentials certifying nothing")
 
 
@@ -132,6 +133,11 @@ def test_outputs_are_written(scenario):
     for f in ("discrimination_by_condition.csv", "citation_abstention_confidence.csv", "confidence_delta.csv",
               "scope_accuracy.csv", "h5_unrecognised_sources.csv", "rep_variance.csv", "per_model.csv"):
         assert len(pd.read_csv(out / f)) > 0, f
+    dist = pd.read_csv(out / "scope_distribution.csv")
+    assert len(dist) == 5 * 3 * 5                                          # scopes x claim types x condition sets
+    shares = dist[["share_0", "share_1", "share_2"]].sum(axis=1)
+    assert np.allclose(shares[dist["n_mentions"] > 0], 1.0)
+    assert ((dist["mention_ci_low"] <= dist["mention"]) & (dist["mention"] <= dist["mention_ci_high"])).all()
     examples = (out / "example_justifications.md").read_text(encoding="utf-8")
     assert examples.count("\n- `") == 12 and "Score 0 in C2" in examples
     summary = (out / "results_summary.md").read_text(encoding="utf-8")
@@ -238,6 +244,32 @@ def test_discrimination_index_is_true_minus_false():
     assert disc["C0"].to_dict() == {("p1", "real_obscure"): pytest.approx(1 / 3), ("p2", "real_obscure"): 1.0}
     both = A.pair_values(df, ["m"], False, "both")
     assert both["C0"].to_dict() == {("p1", "real_obscure"): pytest.approx(0.5), ("p2", "real_obscure"): 0.5}
+
+
+def test_scope_shares_are_pair_level_among_mentions():
+    df = tiny([("p1", True, "C1", [1, 1, 0, 0]), ("p2", True, "C2", [1, 0, 1, 0])])
+    scores = {"m|p1|True|C1|0": "2", "m|p1|True|C1|1": "0", "m|p1|True|C1|2": "NA", "m|p1|True|C1|3": "1",
+              "m|p2|True|C2|0": "2", "m|p2|True|C2|1": "2", "m|p2|True|C2|2": "NA", "m|p2|True|C2|3": "NA"}
+    scope = pd.DataFrame({"response_id": list(scores), "score": list(scores.values())})
+    d = A.scope_shares(df, scope, ["m"], ("real_obscure",))
+    assert (d["n_judged"], d["n_mentions"], d["n_pairs"]) == (8, 5, 2)
+    assert d["mention"] == pytest.approx((3 / 4 + 2 / 4) / 2)              # mean over pairs, not over responses
+    assert d["share_2"] == pytest.approx((1 / 3 + 1) / 2)
+    assert d["share_0"] == pytest.approx((1 / 3 + 0) / 2) and d["share_1"] == pytest.approx((1 / 3 + 0) / 2)
+    assert 0 <= d["share_2_ci_low"] <= d["share_2"] <= d["share_2_ci_high"] <= 1
+    assert A.scope_shares(df, scope, ["m"], ("real_obscure",), ("C2",))["share_2"] == 1.0
+
+
+@pytest.mark.parametrize("row,supported,phrase", [
+    ({"n_pairs": 10, "ci_high": 0.31, "p_holm": 0.004}, True, "so H3 is supported"),
+    ({"n_pairs": 10, "ci_high": 0.47, "p_holm": 0.09}, False, "after Holm correction"),   # CI alone is not enough
+    ({"n_pairs": 10, "ci_high": 0.52, "p_holm": 0.30}, False, "is not below 50%"),
+    ({"n_pairs": 10, "ci_high": 0.50, "p_holm": 0.01}, False, "is not below 50%"),        # the bound must be below
+    ({}, False, "could not be evaluated"),
+])
+def test_h3_rule(row, supported, phrase):
+    ok, text = A.h3_verdict(row)
+    assert ok is supported and phrase in text
 
 
 # ---------------------------------------------------------------- inputs

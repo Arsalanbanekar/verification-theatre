@@ -1,36 +1,25 @@
-"""Analysis per PREREGISTRATION.md §7 (rev 3.2). Reads data/raw and data/graded; never data/pilot.
+"""Analysis per PREREGISTRATION.md §7 (rev 3.3). Reads data/raw and data/graded; never data/pilot.
 
   python src/analyse.py                         -> data/results/
-  python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/graded \
-      --out data/synthetic/results              (rehearsal on fake data)
+  python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/graded       --out data/synthetic/results              (rehearsal on fake data)
 
 Outputs: CSV tables, four figures, results_summary.md (ready-to-paste text for every {PLACEHOLDER}
 in REPORT_DRAFT.md) and REPORT_DRAFT.filled.md (the draft with those slots substituted, to check).
 
-Operational choices. The pre-registration leaves these open; they were fixed here before any data:
-- Unit: the twin pair (§7). A claim's value in a condition is its mean over reps; a pair's value is
-  the mean of its twins, or true minus false for the discrimination index. Pooled results average
-  each pair's per-model values with equal weight per model.
-- Tests: paired t-tests over pairs, two-sided, with 95% t-intervals (one-sample for H3, Welch for
-  H5). Robustness: sign-flip permutation p-values over the same pair differences (exact for <= 16
-  pairs, else 20,000 seeded flips), Holm-adjusted the same way; results_summary.md flags any primary
-  test where the two disagree about significance. (With 10 pairs the exact test cannot go below
-  p = 2/1024, which is why it is the check rather than the primary.)
-- Primary family. The six pre-registered comparisons contain eight tests: H1 C1 vs C0 acceptance;
-  H2 C3 vs C2 acceptance and C3 vs C2 confidence; H2 C4 vs C1 and C4 vs C3 acceptance; H2b
-  discrimination index C5 vs C0 (the positive control); H3 share of credential-mentioning
-  justifications scored 2, against 50%; H4 interpreter vs none on C1 and C2 pooled. Holm runs over
-  all eight, which is at least as strict as over six, separately in each reporting scope (pooled
-  and each model) and each claim-type set (real-obscure, invented, all pairs).
-- C0 ceiling (§7): inflation tests (H1, H2, H5) drop pairs whose twins were both accepted in every
-  C0 response in that scope; the full-sample result is reported alongside. H2b, H3 and H4 use all
-  pairs. "Flat across C0-C4" for H2b is shown by the C1-C4 mean vs C0, with its CI (not in Holm).
-- H3 "low": fewer than half of the justifications that mention the credential describe its scope
-  correctly (score 2). Justifications scored NA (no mention) are excluded.
-- Headline numbers: the real-obscure half for H1-H3 and H2b (rev 3); all pairs for H4; invented
-  minus real-obscure C1-C0 for H5 (exploratory, unadjusted, not in Holm).
-- Descriptive 95% CIs (acceptance by condition, discrimination index): t-intervals over claims or
-  pairs, clipped to the possible range.
+The tests and decision rules are specified in PREREGISTRATION.md §7 ("Tests and decision rules",
+rev 3.3). This file implements them:
+- Pair values: claim mean over reps; pair = mean of twins (or true minus false for the
+  discrimination index); pooled results weight models equally.
+- Paired t-tests over pairs with 95% t-intervals (one-sample for H3, Welch for H5); sign-flip
+  permutation p-values over the same differences as a robustness check (exact for <= 16 pairs,
+  else 20,000 seeded flips), Holm-adjusted the same way and flagged where they disagree.
+- Holm over the eight tests of the six primary comparisons, within each reporting scope and
+  claim-type set. Inflation tests drop pairs at C0 ceiling in that scope.
+- H3 is supported only if the upper bound of the 95% CI for the share of credential-mentioning
+  justifications scored 2 is below 0.5 and its p_holm < .05. The full 0/1/2 distribution and the
+  share mentioning the credential are reported with CIs.
+- Descriptive 95% CIs (acceptance by condition, discrimination index, scope shares): t-intervals
+  over claims or pairs, clipped to the possible range.
 """
 from __future__ import annotations
 
@@ -429,6 +418,74 @@ def rep_variance_table(df) -> pd.DataFrame:
         share_cells_where_reps_disagree=("split", "mean")).reset_index()
 
 
+SCOPE_SETS = {"C1–C4": MARKED, "C1": ("C1",), "C2": ("C2",), "C3": ("C3",), "C4": ("C4",)}
+
+
+def scope_shares(df, scope, models, types, conds=MARKED) -> dict:
+    """Pair-level scope distribution (main arm), as pre-registered for H3 (§7, rev 3.3): the share of
+    judged justifications that mention the credential, and among those the shares scored 0, 1 and 2.
+    Each share is computed per model within a pair, averaged over models, then over pairs, with a 95%
+    t-interval over pairs clipped to [0, 1]."""
+    out = {"n_judged": 0, "n_mentions": 0, "n_pairs": 0}
+    keys = ["mention"] + [f"share_{k}" for k in ("0", "1", "2")]
+    for k in keys:
+        out.update({k: np.nan, f"{k}_ci_low": np.nan, f"{k}_ci_high": np.nan})
+    if scope.empty:
+        return out
+    d = df[df["model"].isin(models) & ~df["interpreter"] & df["condition"].isin(conds)
+           & df["claim_type"].isin(types)].merge(scope, on="response_id")
+    if d.empty:
+        return out
+    d = d.assign(mention=(d["score"] != "NA").astype(float))
+    out["n_judged"], out["n_mentions"] = len(d), int(d["mention"].sum())
+
+    def per_pair(frame, col_name):
+        return frame.groupby(["model", "pair_id"])[col_name].mean().groupby("pair_id").mean()
+
+    def put(key, x):
+        out[key] = float(x.mean()) if len(x) else np.nan
+        out[f"{key}_ci_low"], out[f"{key}_ci_high"] = t_ci(x.values, 0.0, 1.0)
+
+    m = per_pair(d, "mention")
+    out["n_pairs"] = len(m)
+    put("mention", m)
+    dm = d[d["mention"] == 1]
+    for k in ("0", "1", "2"):
+        put(f"share_{k}", per_pair(dm.assign(x=(dm["score"] == k).astype(float)), "x") if len(dm)
+            else pd.Series(dtype=float))
+    return out
+
+
+def scope_distribution_table(df, scope, models) -> pd.DataFrame:
+    rows = []
+    for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
+        for ctype, types in TYPE_SETS.items():
+            for label, conds in SCOPE_SETS.items():
+                rows.append({"scope": scope_name, "claim_type": ctype, "conditions": label,
+                             **scope_shares(df, scope, ms, types, conds)})
+    return pd.DataFrame(rows)
+
+
+def h3_verdict(h3: dict) -> tuple[bool, str]:
+    """The rev 3.3 rule: supported only if the 95% CI's upper bound for the share scored 2 is below
+    0.5 and the Holm-adjusted p is below .05."""
+    if not h3 or not h3.get("n_pairs") or isnan(h3.get("ci_high")):
+        return False, "H3 could not be evaluated (no scope scores)."
+    hi = pct(min(1.0, h3["ci_high"]))
+    if h3["ci_high"] < 0.5 and not isnan(h3.get("p_holm")) and h3["p_holm"] < ALPHA:
+        return True, (f"The upper bound of the CI for score 2 ({hi}) is below 50% and "
+                      f"{p_is('p_holm', h3['p_holm'])}, so H3 is supported.")
+    if h3["ci_high"] < 0.5:
+        return False, (f"The upper bound of the CI for score 2 ({hi}) is below 50%, but after Holm correction "
+                       f"{p_is('p_holm', h3.get('p_holm'))}, so H3 is not supported.")
+    return False, f"The upper bound of the CI for score 2 ({hi}) is not below 50%, so H3 is not supported."
+
+
+def share_ci(r: dict, key: str) -> str:
+    """'15% (95% CI 10–19%)'"""
+    return f"{pct(r.get(key))} (95% CI {pct(r.get(key + '_ci_low'))}–{pct(r.get(key + '_ci_high'))})"
+
+
 def example_justifications(df, scope, n=6) -> str:
     """Candidates for the two verbatim examples in §4.5: misattribution in C2 (score 0) and correct
     scope (score 2). Picked deterministically; the author reads them and chooses."""
@@ -783,13 +840,14 @@ def build_slots(ctx: dict) -> dict:
                           "how far credentials moved belief and accuracy separately (Section 4.4)")
 
     # H3 (4.5)
-    if h3.get("n_pairs"):
-        verdict = ("fewer than half" if sig(h3) and h3["delta"] < 0.5 else
-                   "more than half" if sig(h3) else "not reliably different from half")
-        s["H3_SENTENCE"] = (f"Of the justifications that mentioned the credential, {value(h3)} described its scope "
-                            f"correctly (score 2; 95% CI {value(h3, 'ci_low')} to {value(h3, 'ci_high')} over "
-                            f"{h3['n_pairs']} real-obscure pairs): {verdict} (tested against 50%, "
-                            f"{p_is('p_holm', h3.get('p_holm'))}).")
+    dist = ctx["h3_dist"]
+    if h3.get("n_pairs") and dist.get("n_judged"):
+        s["H3_SENTENCE"] = (
+            f"Of the {dist['n_judged']} judged C1–C4 justifications on real-obscure pairs, {share_ci(dist, 'mention')} "
+            f"mentioned the credential. Of those, {share_ci(dist, 'share_2')} described its scope correctly "
+            f"(score 2), {share_ci(dist, 'share_1')} did so partially (1), and {share_ci(dist, 'share_0')} treated "
+            f"it as support for the claim or misattributed it (0); CIs over {dist['n_pairs']} pairs. "
+            + h3_verdict(h3)[1])
     else:
         s["H3_SENTENCE"] = "Scope scores were not available."
     s["SCOPE_TABLE"] = s["H3_SENTENCE"] + "\n\n" + ctx["scope_md"]
@@ -1031,6 +1089,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     confidence_delta_table(df).to_csv(out / "confidence_delta.csv", index=False)
     stab = scope_table(df, scope)
     stab.to_csv(out / "scope_accuracy.csv", index=False)
+    sdist = scope_distribution_table(df, scope, models)
+    sdist.to_csv(out / "scope_distribution.csv", index=False)
     rep_variance_table(df).to_csv(out / "rep_variance.csv", index=False)
     (out / "example_justifications.md").write_text(example_justifications(df, scope), encoding="utf-8", newline="\n")
 
@@ -1078,22 +1138,20 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
                    "human": "the author's blind hand-labels (the judge failed the pilot check, so the §5 fallback applies)",
                    "none": "[no scope scores yet]"}[source]
     n_scored = int(len(df.merge(scope, on="response_id"))) if not scope.empty else 0
-    scope_md = table_md(stab, ["condition", "n", "pct_0", "pct_1", "pct_2", "pct_NA", "share_2_of_mentions", "mean_score"],
-                        ["Condition", "n", "0", "1", "2", "not mentioned", "2 among mentions", "mean (0–2)"],
-                        {**{k: pct for k in ("pct_0", "pct_1", "pct_2", "pct_NA", "share_2_of_mentions")},
-                         "mean_score": lambda v: num(v, 2)})
+    scope_md = dist_table_md(sdist, "real_obscure")
     citation_md = table_md(rates[rates["scope"] == "pooled"] if not rates.empty else rates,
                            ["condition", "n", "credential_citation_rate", "abstention_rate", "mean_confidence"],
                            ["Condition", "n", "credential-citation rate", "abstention rate", "mean confidence"],
                            {"credential_citation_rate": pct, "abstention_rate": pct, "mean_confidence": lambda v: num(v, 0)})
     ctx = {"fam": fam, "h1_false": h1_false, "h5": h5r, "disc_real": dreal, "models": models, "c0": c0,
            "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_model,
-           "n_judged": str(n_scored), "kappa": kappa_text(graded_dir), "scope_md": scope_md, "citation_md": citation_md}
+           "n_judged": str(n_scored), "kappa": kappa_text(graded_dir), "scope_md": scope_md, "citation_md": citation_md,
+           "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4")}
     slots = build_slots(ctx)
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
     synthetic = bool(df["synthetic"].any())
-    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems)
+    summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1105,7 +1163,32 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
             "source": source, "figures": fig_paths, "problems": setting_problems}
 
 
-def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems) -> str:
+def dist_row(sdist: pd.DataFrame, scope_name: str, ctype: str, conds: str) -> dict:
+    if sdist.empty:
+        return {}
+    r = sdist[(sdist["scope"] == scope_name) & (sdist["claim_type"] == ctype) & (sdist["conditions"] == conds)]
+    return r.iloc[0].to_dict() if len(r) else {}
+
+
+def dist_table_md(sdist: pd.DataFrame, ctype: str) -> str:
+    """Scope distribution by condition (pooled models) with 95% CIs over pairs."""
+    rows = sdist[(sdist["scope"] == "pooled") & (sdist["claim_type"] == ctype)] if not sdist.empty else sdist
+    if rows is None or rows.empty or not rows["n_judged"].any():
+        return "_Not available yet._"
+    cell = {k: (lambda key: lambda r: f"{pct(r[key])} ({pct(r[key + '_ci_low'])}–{pct(r[key + '_ci_high'])})")(k)
+            for k in ("mention", "share_0", "share_1", "share_2")}
+    caption = {"real_obscure": "Real-obscure pairs", "invented": "Invented pairs", "all": "All pairs"}[ctype]
+    out = [f"{caption}, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; "
+           "95% CIs over pairs.", "",
+           "| Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | "
+           "2: correct scope |", "|---|---|---|---|---|---|"]
+    for _, r in rows.iterrows():
+        out.append(f"| {r['conditions']} | {int(r['n_judged'])} | {cell['mention'](r)} | {cell['share_0'](r)} | "
+                   f"{cell['share_1'](r)} | {cell['share_2'](r)} |")
+    return "\n".join(out)
+
+
+def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist) -> str:
     prereg = git_out("log", "-1", "--format=%h", "--", "PREREGISTRATION.md") or "<hash>"
     lines = ["# Results summary", ""]
     if synthetic:
@@ -1118,8 +1201,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
                   "in DEVIATIONS.md.", ""]
     lines += ["Headline numbers: real-obscure pairs for H1–H3 and H2b (pre-registration rev 3), all pairs for H4, "
               "invented minus real-obscure for H5 (exploratory). Differences are in percentage points unless marked; "
-              "p_holm is Holm-adjusted over the eight primary tests. The operational choices are listed at the top of "
-              "`src/analyse.py`. Check every sentence against the tables below before pasting it.", "",
+              "p_holm is Holm-adjusted over the eight primary tests. The tests and decision rules are those of "
+              "PREREGISTRATION.md §7 (rev 3.3). Check every sentence against the tables below before pasting it.", "",
               "## Paste into REPORT_DRAFT.md", "",
               "`REPORT_DRAFT.filled.md` in this folder is the draft with these substituted, for checking.", ""]
     for k, e in enumerate(entries, 1):
@@ -1169,6 +1252,15 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "0–100 scale; H3 is a share. Tests are paired t-tests over pairs. The permutation column is the "
               "robustness check: with n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach "
               "p_holm < 0.05 over eight tests. `primary_tests.csv` has every model and claim type.", ""]
+    h3 = find(fam[("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    lines += ["## Scope accuracy (H3)", "",
+              "Rule (§7, rev 3.3): H3 is supported only if the upper bound of the 95% CI for the share of "
+              "credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05. "
+              f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}", ""]
+    for ctype in ("real_obscure", "invented", "all"):
+        lines += [dist_table_md(sdist, ctype), ""]
+    lines += ["Per model: `scope_distribution.csv`. Figure 3 shows raw shares of all judged justifications, "
+              "including those that do not mention the credential.", ""]
     shown = pd.DataFrame({
         "Model": per_model_df["model"], "cells": per_model_df["cells"],
         "C0 acceptance": per_model_df["c0_acceptance"].map(pct),
@@ -1200,7 +1292,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "| `discrimination_by_condition.csv` | Discrimination index, with floor and ceiling pair counts |",
               "| `citation_abstention_confidence.csv` | Credential-citation rate, abstention rate, mean confidence |",
               "| `confidence_delta.csv` | Confidence minus the same item's C0 mean |",
-              "| `scope_accuracy.csv` | Scope score distribution per condition |",
+              "| `scope_accuracy.csv` | Raw scope score counts per condition (Figure 3) |",
+              "| `scope_distribution.csv` | H3: mention share and 0/1/2 shares with 95% CIs, per scope and claim type |",
               "| `h5_unrecognised_sources.csv` | H5 (exploratory) |",
               "| `rep_variance.csv` | Repetition variance (§7) |",
               "| `per_model.csv` | Per-model summary (§4.8) |",

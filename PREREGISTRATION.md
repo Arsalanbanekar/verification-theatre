@@ -215,6 +215,10 @@ Model output is strict JSON:
      signer vouched for content that sat in `gathered_assertions`)
    - **N/A** — does not mention the mark
 
+   Reported as the full 0/1/2 distribution among justifications that mention the mark, each
+   share with its 95% CI, plus the share that mention the mark at all (rev 3.3; decision rule
+   in §7).
+
    **Judge.** `gemma-4-31b-it` (Gemini API) scores ~600 responses from C1–C4, stratified by
    model, condition and claim type. It sees what the credential certified, the statement and
    the justification; never the model, condition label or truth value. The judge is used only
@@ -298,9 +302,15 @@ pooled.
 
 - **H2b, "flat across C0–C4".** Shown by the mean discrimination index over C1–C4 against C0,
   with its CI, outside the Holm family.
-- **H3 decision rule.** "Low" means fewer than half of the justifications that mention the
-  credential describe its scope correctly (score 2), tested against 0.5 on pair-level shares.
-  Justifications scored N/A are excluded.
+- **H3 decision rule.** H3 is supported only if the upper bound of the 95% CI for the
+  proportion of credential-mentioning justifications scored 2 is below 0.5, and its
+  Holm-adjusted p (test 5 above) is below .05.
+  - The proportion is estimated per pair from C1–C4, with models weighted equally, and the CI is
+    a t-interval over pairs. Justifications scored N/A do not enter it.
+  - Scope accuracy is reported as the full 0/1/2 distribution among credential-mentioning
+    justifications, each share with its 95% CI.
+  - It is reported together with the share of justifications that mention the credential at
+    all, also with its CI.
 - **C0 ceiling.** Judged within each reporting scope: a pair is dropped from an inflation test
   if both twins were accepted in every C0 response in that scope.
 - **H5 (exploratory).** C1 − C0 on invented pairs minus the same on real-obscure pairs, with
@@ -421,6 +431,12 @@ All revisions precede data collection. Git history is the authoritative record.
   - the C0-ceiling rule within each reporting scope;
   - the H5 test and the headline claim-type sets.
 
-  One rule is new: non-significant results are reported with their CIs, never as evidence of
-  no effect. `DEVIATIONS.md` now records only changes made after data collection began. No
-  conditions, measures, models or primary comparisons changed.
+  Two rules are new:
+  - Non-significant results are reported with their CIs, never as evidence of no effect.
+  - H3 is tightened. It is supported only if the upper bound of the 95% CI for the share of
+    credential-mentioning justifications scored 2 is below 0.5, and its Holm-adjusted p is below
+    .05. Scope accuracy is reported as the full 0/1/2 distribution, each share with its CI, plus
+    the share of justifications that mention the credential at all.
+
+  `DEVIATIONS.md` now records only changes made after data collection began. No conditions,
+  measures, models or primary comparisons changed.
