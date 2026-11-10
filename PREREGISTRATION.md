@@ -10,6 +10,7 @@ Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the rea
 H5 restated; baseline stratification corrected. Rev 3.1: wording correction in §3.
 Revision 3.2 (9 Nov 2026, pre-data): four models; temperature and reasoning settings stated;
 scope-accuracy judge specified. See §12.
+Revision 3.3 (10 Nov 2026, pre-data): tests and decision rules specified in §7. See §12.
 
 ---
 
@@ -269,8 +270,46 @@ unit — paired tests, or pair as a random effect in a mixed model. 20 pairs, no
 5. Scope accuracy across C1–C4 — H3
 6. Interpreter vs no-interpreter on C1 and C2 — H4
 
-Holm–Bonferroni correction across the six primary comparisons. Effect sizes with confidence
-intervals, not only p-values. Reported per-model and pooled.
+Holm–Bonferroni correction across the eight tests that make up the six primary comparisons
+(below). Effect sizes with confidence intervals, not only p-values. Reported per-model and
+pooled.
+
+**Tests and decision rules (rev 3.3).** Fixed before any data; `src/analyse.py` implements them.
+
+- **Pair values.** A claim's value in a condition is its mean over reps. A pair's value is the
+  mean of its twins, or true minus false for the discrimination index. Pooled results weight
+  each model equally.
+- **Tests.** Paired t-tests over pairs, two-sided, with 95% t-intervals (one-sample for H3).
+  Sign-flip permutation tests on the same pair differences are reported alongside as a
+  robustness check. With 10 pairs the exact permutation test cannot give p below 2/1024, so it
+  is the check, not the primary test.
+- **The Holm family.** The six comparisons contain the eight tests below. Holm runs over all
+  eight, which is at least as strict as over six. It is applied separately within each reporting
+  scope (pooled, and each model) and each claim-type set (real-obscure, invented, all pairs).
+
+| Comparison | Test |
+|---|---|
+| 1 (H1) | C1 vs C0 acceptance |
+| 2 (H2) | C3 vs C2 acceptance; C3 vs C2 confidence |
+| 3 (H2) | C4 vs C1 acceptance; C4 vs C3 acceptance |
+| 4 (H2b) | Discrimination index, C5 vs C0 (the positive control) |
+| 5 (H3) | Share of credential-mentioning justifications scored 2, against 0.5 |
+| 6 (H4) | Interpreter vs none on C1 and C2 pooled: interpreter-arm models, all pairs |
+
+- **H2b, "flat across C0–C4".** Shown by the mean discrimination index over C1–C4 against C0,
+  with its CI, outside the Holm family.
+- **H3 decision rule.** "Low" means fewer than half of the justifications that mention the
+  credential describe its scope correctly (score 2), tested against 0.5 on pair-level shares.
+  Justifications scored N/A are excluded.
+- **C0 ceiling.** Judged within each reporting scope: a pair is dropped from an inflation test
+  if both twins were accepted in every C0 response in that scope.
+- **H5 (exploratory).** C1 − C0 on invented pairs minus the same on real-obscure pairs, with
+  C0-ceiling pairs dropped. Welch t-test, unadjusted, outside the Holm family.
+- **Headline numbers.** The real-obscure half for H1–H3 and H2b (rev 3), all pairs for H4. The
+  invented half is reported separately throughout.
+- **Non-significant results.** With 10 real-obscure pairs and Holm over eight tests, only clear
+  effects can reach significance. A non-significant result is reported with its CI, as the
+  range of effects the data leave open, and never as evidence of no effect.
 
 **Stratification by baseline.** C0 is the per-item prior measure. Whether an item has room to
 move depends on the direction of the predicted effect:
@@ -371,3 +410,17 @@ All revisions precede data collection. Git history is the authoritative record.
   documented reasoning setting per model, logged per call. §5 names the scope-accuracy judge,
   its pilot pass rule and the hand-label fallback. §9 adds the same-provider judge limitation.
   No conditions, measures or primary comparisons changed.
+- **Rev 3.3 (10 Nov 2026).** Decided before any data. §7 now specifies the tests and decision
+  rules the plan left open. These were recorded in `DEVIATIONS.md` on 9 Nov and are moved here:
+  - paired t-tests over pairs, with permutation tests as a robustness check;
+  - Holm over the eight tests that make up the six primary comparisons;
+  - pair values, and equal weighting of models;
+  - how H2b's "flat" is shown;
+  - the H3 decision rule;
+  - the H4 test;
+  - the C0-ceiling rule within each reporting scope;
+  - the H5 test and the headline claim-type sets.
+
+  One rule is new: non-significant results are reported with their CIs, never as evidence of
+  no effect. `DEVIATIONS.md` now records only changes made after data collection began. No
+  conditions, measures, models or primary comparisons changed.
