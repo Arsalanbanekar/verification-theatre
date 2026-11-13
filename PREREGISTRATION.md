@@ -3,7 +3,8 @@
 **Commit this file before any experimental data exists.** Changes after that point go in
 `DEVIATIONS.md`, dated, with a reason — not by editing this file.
 
-Status: pre-registered. The pilot began on 10 Nov 2026; main data collection has not started.
+Status: pre-registered. A pilot of the study calls ran on 10–11 Nov 2026, before the sprint, and
+is excluded from analysis. Main data collection runs during the sprint (13–15 Nov 2026).
 Revision 2 (7 Nov 2026, pre-data): corpus alteration rules, signer constancy, discrimination
 index, paired analysis.
 Revision 3 (8 Nov 2026, pre-data): claim-type factor reinterpreted after the realness probe;
@@ -11,7 +12,7 @@ H5 restated; baseline stratification corrected. Rev 3.1: wording correction in �
 Revision 3.2 (9 Nov 2026, pre-data): four models; temperature and reasoning settings stated;
 scope-accuracy judge specified. See §12.
 Revision 3.3 (10 Nov 2026, pre-data): tests and decision rules specified in §7. See §12.
-Revision 3.4 (decided 10 Nov 2026 after the pilot, committed 11 Nov 2026, before the main run):
+Revision 3.4 (decided 10 Nov 2026 after the pilot's first run, committed 11 Nov 2026, before the main run):
 scope-accuracy judge replaced and cross-checked by a second judge; hand-labels removed. See §12.
 
 ---
@@ -425,8 +426,9 @@ anything in the corpus, and no private individual is named.
 
 ## 12. Revision history
 
-Revisions 1 to 3.3 precede all data collection. Rev 3.4 follows the pilot and precedes the main
-run. Git history is the authoritative record.
+Revisions 1 to 3.3 precede all data collection. Rev 3.4 follows the pilot's first run (10 Nov
+2026) and precedes the main run, which takes place during the sprint (13–15 Nov 2026). Git
+history is the authoritative record.
 
 - **Rev 1 (6 Nov 2026).** Initial design.
 - **Rev 2 (7 Nov 2026).** Twin-pair corpus; alteration rules including no attributive party
@@ -475,8 +477,9 @@ run. Git history is the authoritative record.
 
   `DEVIATIONS.md` now records only changes made after data collection began. No conditions,
   measures, models or primary comparisons changed.
-- **Rev 3.4 (11 Nov 2026).** Decided on 10 Nov after the pilot, on its evidence, and committed
-  on 11 Nov, before the main run; no main-run data existed. In the pilot, `gemma-4-31b-it` was too slow and unreliable to judge
+- **Rev 3.4 (11 Nov 2026).** Decided on 10 Nov after the pilot's first run, on its evidence, and
+  committed on 11 Nov, before the pilot's last three study calls and before the main run; no
+  main-run data existed. In the pilot, `gemma-4-31b-it` was too slow and unreliable to judge
   ~600 responses: its 4 completed calls took 20–43 s each, and the next one kept failing with
   server errors or time-outs until the run was stopped. Changes:
   - §5: the judge is a paid OpenRouter model, chosen before any main-data judging by stated
