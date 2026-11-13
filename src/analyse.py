@@ -1254,8 +1254,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "- §4.2: the slot reports real-obscure false claims plus the pre-registered both-twin test; invented "
               "items are in §4.6.",
               "- §3 cites `DEVIATIONS.md`: list any deviations there, or state that there were none.",
-              "- README and Appendix A: say when the data were collected (dates above); collection before the "
-              "sprint (13–15 Nov 2026) must be disclosed.",
+              "- README and Appendix A: give the collection dates above. They should fall within the sprint "
+              "(13–15 Nov 2026); only the pilot (10–11 Nov, excluded from analysis) came before it.",
               "- §4.8: use the per-model table and the scale comparison below.", *notes]
     if source == "withheld":
         lines += ["- §3.4 and §4.5: judge results are withheld (" + gate_line(gate) + "). Give the kappa, say that H3 "

@@ -1,20 +1,25 @@
 # Status
 
-Last updated 11 Nov 2026. Data collection started on 10 Nov 2026, before the sprint (13–15 Nov
-2026), in this order:
-1. the pilot;
-2. the freeze;
-3. the Groq models, then Gemini;
-4. the two judges (`RUNBOOK.md` §4–10).
+Last updated 13 Nov 2026, the first day of the sprint (13–15 Nov 2026).
 
-Pilot: 17 of 20 study calls done; Qwen's C2, C5 and C2-with-interpreter remain. Finish them with
-`python src/runner.py --pilot --skip-judge`. The pilot's judge check waits for the new judge.
-Gemma (the judge in rev 3.2–3.3) was too slow and unreliable in the pilot and was replaced in
-rev 3.4. Its 4 pilot judgements stay in `data/pilot/judge.jsonl` and are never read.
+**Before the sprint**, tagged `pre-sprint`: the design, corpus, code, both probes, the
+pre-registration (revs 1–3.4) and a pilot of the study calls on 10–11 Nov (`data/pilot/`,
+excluded from analysis). README.md, "Pre-sprint vs sprint work", gives the dates and commits.
+
+**During the sprint**, in this order (`RUNBOOK.md` §6–13):
+1. main data collection: the Groq models, then Gemini;
+2. the two judges;
+3. analysis;
+4. write-up.
+
+Pilot: all 20 study cells are done. 17 ran on 10 Nov and Qwen's last 3 on 11 Nov; Qwen's C2 ended
+`parse_failed` after its retry. The pilot's judge check waits for the new judge. Gemma (the judge
+in rev 3.2–3.3) was too slow and unreliable in the pilot and was replaced in rev 3.4. Its 4 pilot
+judgements stay in `data/pilot/judge.jsonl` and are never read.
 
 ## Done
 
-- **Pre-registration rev 3.4** (after the pilot, before the main run): two OpenRouter judges and
+- **Pre-registration rev 3.4** (after the pilot's first run, before the main run): two OpenRouter judges and
   the kappa gate (§5); H3 when the gate fails (§7); judge limitations (§9). Rev 3.3 (§7) holds the
   tests and decision rules; revision history in §12.
 - **Corpus**: 40 claims in 20 twin pairs (10 real-obscure, verified verbatim; 10 invented,
@@ -64,15 +69,20 @@ rev 3.4. Its 4 pilot judgements stay in `data/pilot/judge.jsonl` and are never r
 
 ## Open issues
 
-1. **Finish the pilot's study calls**: `python src/runner.py --pilot --skip-judge`.
+1. **Start the main run** (`RUNBOOK.md` §7): the Groq models, then Gemini.
 2. **Choose the judges** once OpenRouter has credit. The top 3 candidates for each come with
    prices, then the choice goes in `models.yaml` and is committed (`RUNBOOK.md` §9a). After that
    comes the pilot judge check.
-3. **Cross-check time**: 48 calls per UTC day means three UTC days for 100. It starts only after
-   the main run.
-4. **Pre-sprint data.** `CLAUDE.md` still says "No experimental data before 13 Nov 2026".
-   `PREREGISTRATION.md` line 3 says changes after data exist go in `DEVIATIONS.md`; rev 3.4
-   follows the pilot, and §12 records that. The README and the report must disclose the dates.
+3. **Cross-check time.** At 48 calls per UTC day, 100 calls take three UTC days, and a UTC day
+   starts at 05:30 IST. The cross-check can start only after the main run, and Gemini's second
+   quota day ends that run on 14 Nov after 13:30 IST. So at 48 a day, 96 of 100 are done when the
+   sprint ends, and the §5 gate stays PENDING.
+   - The fix: buy at least 10 OpenRouter credits, which raises the free limit to 1000 a day, then
+     raise `judges.crosscheck.limits.rpd`. That is pacing, not protocol.
+   - Otherwise this needs a decision and a `DEVIATIONS.md` entry.
+4. **Disclosure.** Only the pilot (10–11 Nov) predates the sprint among the data. The README's
+   "Pre-sprint vs sprint work" section and §3 of the report say so. Rev 3.4 followed the pilot's
+   first run; `PREREGISTRATION.md` §12 records it, and `DEVIATIONS.md` points to it.
 5. **Power.** With 10 real-obscure pairs and Holm over 8 tests, only clear effects reach
    significance. Elsewhere the CIs carry the result, and the generated text says so.
 6. **qwen/qwen3.8-27b is a preview model.** Run `--check-models` just before the main run.

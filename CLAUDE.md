@@ -29,10 +29,12 @@ wrong.
 
 ## Non-negotiables
 
-1. **No experimental data before 13 Nov 2026.** Code written before the sprint is fine and
-   must be marked preexisting in the README and the report. Collected *results* before the
-   sprint are a different thing and create a disclosure problem. The pilot is capped at ~30
-   calls and is disclosed.
+1. **No experimental data before 13 Nov 2026, apart from the disclosed pilot.** Code written
+   before the sprint is fine and must be marked preexisting in the README and the report.
+   Collected *results* before the sprint are a different thing and create a disclosure problem.
+   The pilot is capped at ~30 calls and is disclosed: it ran on 10–11 Nov 2026 (`data/pilot/`)
+   and is excluded from all analysis. Main data collection, judging, analysis and write-up
+   happen during the sprint.
 2. **Never mutate raw responses.** `data/raw/` is append-only. All grading, parsing and
    analysis reads from it and writes elsewhere. If a parse fails, log the failure, keep the
    raw text.
@@ -110,7 +112,7 @@ The runner must:
 - checkpoint after every response
 - print a live count of cells completed / remaining per model
 
-Start the Gemini arm **Friday afternoon right after the reset**, not Sunday.
+Start the Gemini arm **Friday 13 Nov, in the afternoon, right after the reset**, not Sunday.
 
 ---
 

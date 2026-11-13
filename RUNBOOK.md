@@ -10,7 +10,7 @@ see; section 12 lists what can go wrong and what to do.
 2. [Setup check](#2-setup-check-once-before-the-pilot)
 3. [Rehearsal on synthetic data](#3-rehearsal-on-synthetic-data-no-api-calls)
 4. [The pilot](#4-the-pilot-first)
-5. [Freeze](#5-freeze-right-after-the-pilots-study-calls)
+5. [Freeze: the `pre-sprint` tag](#5-freeze-the-pre-sprint-tag)
 6. [Timeline](#6-timeline)
 7. [Main run: Groq, then Gemini](#7-main-run-groq-then-gemini)
 8. [Gemini, second quota day](#8-gemini-second-quota-day)
@@ -26,9 +26,13 @@ see; section 12 lists what can go wrong and what to do.
 
 ## 1. Rules that hold throughout
 
-- **Data collection starts before the sprint** (13–15 Nov 2026), so it must be disclosed. The
-  README says so, and the report must give the collection dates (section 13). The pilot
-  (section 4) is excluded from analysis.
+- **Pre-sprint vs sprint work.** The sprint runs 13–15 Nov 2026.
+  - Before it: the code, the corpus, both probes, the pre-registration (revs 1–3.4) and a pilot
+    of the study calls (10–11 Nov, section 4). The pilot is disclosed and excluded from analysis.
+  - During it: main data collection, judging, analysis and write-up.
+
+  The README's "Pre-sprint vs sprint work" section says so, and the report gives the collection
+  dates (section 13).
 - **The judges are chosen before any main-data judging** (pre-registration §5, rev 3.4): their
   model IDs, families and serving providers go into `models.yaml` and are committed on their own
   before `grade.py --judge` or `--crosscheck` first runs (section 9).
@@ -137,9 +141,9 @@ Without `--skip-judge`, the pilot refuses to start while the main judge is not c
 no call and prints:
 `The pilot's judge check needs the main judge, which cannot run yet`.
 
-State on 11 Nov 2026: 17 of 20 study calls are done; Qwen's C2, C5 and C2-with-interpreter are
-missing. `data/pilot/judge.jsonl` holds 4 judgements by the judge replaced in pre-registration
-rev 3.4. It stays on disk and is never read.
+Stage 1 is done, before the sprint: 17 study calls on 10 Nov 2026 and Qwen's last 3 on 11 Nov.
+Qwen's C2 ended `parse_failed` after its retry. `data/pilot/judge.jsonl` holds 4 judgements by
+the judge replaced in pre-registration rev 3.4. It stays on disk and is never read.
 
 **Stage 2: the judge check** (after section 9a):
 ```
@@ -162,17 +166,21 @@ Read `data/pilot/pilot_report.md` and act on it:
 | `WARNING: projected total ... above $4.00` | The full run may hit the $4.50 hard stop | Apply the cut order (section 15) before the main run and record it in `DEVIATIONS.md` |
 | `Projected total including spend so far: $X` | Cost of the full run, from measured tokens (judges excluded) | Keep this number for the report |
 
-Commit the pilot after each stage. It is disclosed data:
+Commit the pilot after each stage. It is disclosed data. Stage 1 was committed on 13 Nov; after
+stage 2:
 ```
 git add data/pilot
-git commit -m "Pilot study calls on real-01-t (disclosed; excluded from analysis)"
+git commit -m "Pilot judge check (disclosed; excluded from analysis)"
 ```
 
-## 5. Freeze (right after the pilot's study calls)
+## 5. Freeze: the `pre-sprint` tag
 
+The tag `pre-sprint` (13 Nov 2026) marks everything prepared before the sprint: the code, corpus,
+probes, pre-registration and the pilot's study calls. The main run uses that code. Before
+starting it:
 ```
 git status
-git tag -a sprint-freeze -m "Code, corpus and analysis frozen before the main run"
+git log --oneline -1 pre-sprint
 ```
 `git status` should report nothing to commit. From here, no code changes. If a bug forces one,
 commit it on its own with a message saying why, and add a `DEVIATIONS.md` entry.
@@ -182,14 +190,14 @@ pre-registration §5 requires before any main-data judging. Commit it on its own
 
 ## 6. Timeline
 
-Data collection is under way, in this order: the pilot's study calls, the freeze, the three Groq
-models, then gemini-3.5-flash-lite. The judges come after the main run. Choosing them needs
-OpenRouter credit and can happen any time before that.
+Step 1 was done before the sprint, and step 2 on 13 Nov 2026, before the main run. Main data
+collection runs during the sprint, from 13 Nov: the three Groq models, then gemini-3.5-flash-lite. The judges come after the main
+run. Choosing them needs OpenRouter credit and can happen any time before that.
 
 | Step | What | Command | Takes |
 |---|---|---|---|
-| 1 | Pilot study calls, then read the report | `python src/runner.py --pilot --skip-judge` | a few minutes |
-| 2 | Freeze | section 5 | 2 min |
+| 1 | Pilot study calls (done 10–11 Nov, before the sprint) | `python src/runner.py --pilot --skip-judge` | a few minutes |
+| 2 | Freeze: tag `pre-sprint` (done 13 Nov) | section 5 | 2 min |
 | 3 | Groq: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b | `python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b` | 30–90 min |
 | 4 | Gemini, up to its daily quota | `python src/runner.py --models gemini-3.5-flash-lite` | ~40 min, then it stops for the day |
 | 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
@@ -200,8 +208,12 @@ OpenRouter credit and can happen any time before that.
 | 10 | Agreement, then analysis | `python src/grade.py --agreement`, then `python src/analyse.py` | 2 min |
 | 11 | Write up, check, submit | sections 13–14 | |
 
-The cross-check is the slowest step, and it can only start once the main run is complete, because
-its 100 responses come from the main judge's sample. Start it as soon as Gemini finishes.
+The cross-check is the slowest step. It can only start once the main run is complete, because
+its 100 responses come from the main judge's sample, so start it as soon as Gemini finishes.
+
+Gemini started on 13 Nov after 13:30 IST finishes after 13:30 IST on 14 Nov. At 48 calls per
+UTC day, the cross-check then has 96 of its 100 calls done when the sprint ends on 15 Nov, and
+the §5 gate stays PENDING. Section 9c gives the fix.
 
 **Gemini's quota.** Gemini allows 500 calls a day, and its day resets at midnight US Pacific,
 which is 13:30 IST.
@@ -367,7 +379,11 @@ python src/grade.py --crosscheck
   shortly before 05:30 and another just after it use two days' allowance within an hour.
 - **Changing the cap.** It is `limits.rpd` under `judges.crosscheck` in `models.yaml`. Like the
   other rate limits, it is pacing, not protocol. Once 10 credits have been bought, OpenRouter
-  allows 1000 free calls a day.
+  allows 1000 free calls a day. That is how the cross-check finishes within this sprint
+  (section 6):
+  1. Buy at least 10 credits.
+  2. Raise `rpd`, for example to 900, and commit the change.
+  3. The 100 calls then take a single session.
 
 Both judges print every failed attempt as `[main judge] HTTP ...` or `[crosscheck judge] HTTP
 ...`, and Ctrl+C stops either one cleanly.
@@ -449,7 +465,7 @@ How to read the numbers:
   using the CI rather than calling it "no effect". The generated sentences already do this.
 
 The tests and decision rules are those of `PREREGISTRATION.md` §7: rev 3.3, fixed before any
-data, plus the judge gate of rev 3.4, fixed after the pilot and before the main run.
+data, plus the judge gate of rev 3.4, fixed after the pilot's first run and before the main run.
 
 Commit the results:
 ```
@@ -538,8 +554,8 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
    - if judge results are withheld (section 10), the §3.4 and §4.5 text: give the kappa, say
      that H3 was not tested, and leave out the scope table and examples.
 
-   The draft's facts were updated after the pilot and before the main run: rev 3.4, the four
-   models, the two judges and the kappa rule, the tests, the H3 rule.
+   The draft's facts were updated before the main run: rev 3.4, the four models, the two
+   judges and the kappa rule, the tests, the H3 rule.
 4. **Figures:** Figure 1 goes in §4.2 and Figure 2 in §4.4. Figures 3 and 4 are optional for
    §4.5 and §4.7, if space allows (8 pages maximum before references and appendices).
 5. **§4.5 examples:** pick one correct and one misattributing justification from
@@ -552,13 +568,14 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
    `python -c "print(len(open('abstract.txt',encoding='utf-8').read().split()))"` on a text file.
 9. **References:** open every one marked `[verify]`, fix authors and titles, and delete the tag.
    Remove any reference you cannot verify.
-10. **Pre-sprint work and data.** The README and Appendix A must say three things:
-    - the code predates the sprint;
-    - a pilot ran before it;
-    - the data were collected before the sprint (13–15 Nov), with the dates.
+10. **Pre-sprint vs sprint work.** The README and Appendix A must say three things:
+    - the design, corpus, code, probes and pre-registration predate the sprint;
+    - a pilot of the study calls ran on 10–11 Nov, before the sprint, and is excluded from
+      analysis;
+    - the main data were collected during the sprint (13–15 Nov), with the dates.
 
-    `results_summary.md` gives the first and last collection times, and the pilot's date is in
-    `data/pilot/pilot_report.md`.
+    `results_summary.md` gives the first and last collection times. The pilot's responses carry
+    their own timestamps in `data/pilot/`.
 
 ## 14. Submission checklist
 
@@ -580,9 +597,9 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
 - [ ] Abstract 150–250 words; main text no more than 8 pages; official template from the
       sprint's Guidelines tab.
 - [ ] Every reference verified; no `[verify]` tags left.
-- [ ] README: pre-sprint code, the pilot and the pre-sprint data collection disclosed, with dates.
-- [ ] The report says the data were collected before the sprint, with the dates from
-      `results_summary.md`.
+- [ ] README: the "Pre-sprint vs sprint work" section matches what happened, with dates.
+- [ ] The report says the main data were collected during the sprint, with the dates from
+      `results_summary.md`, and that only the pilot (10–11 Nov) came before it.
 - [ ] `.env` was never committed: `git log --all --oneline -- .env` prints nothing.
 - [ ] Everything is committed and pushed:
       ```

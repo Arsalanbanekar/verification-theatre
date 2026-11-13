@@ -116,9 +116,12 @@ evidence move that confidence.
 
 ## 3. Methods (pre-sprint; check against final code before submitting)
 
-Design, hypotheses and analysis plan were pre-registered before data collection
-(`PREREGISTRATION.md`, rev 3.3). The scope-accuracy judge was replaced after the pilot and
-before the main run (rev 3.4, commit `8d4f9fa`). Deviations are listed in `DEVIATIONS.md`.
+The design, corpus, code and pre-registration were prepared before the sprint, along with a small
+pilot of the study calls (10–11 Nov 2026) that is excluded from analysis; the main data
+collection, judging, analysis and write-up were done during the sprint (13–15 Nov 2026). Design,
+hypotheses and analysis plan were pre-registered before data collection (`PREREGISTRATION.md`,
+rev 3.3). The scope-accuracy judge was replaced after the pilot's first run and before the main
+run (rev 3.4, commit `172861e`). Deviations are listed in `DEVIATIONS.md`.
 
 ### 3.1 Corpus
 
