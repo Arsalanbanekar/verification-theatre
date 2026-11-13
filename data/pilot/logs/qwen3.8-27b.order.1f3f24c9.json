@@ -1,0 +1,37 @@
+{
+ "model": "qwen3.8-27b",
+ "plan": "1f3f24c9",
+ "order_seed": 0,
+ "cells": [
+  [
+   "real-01-t",
+   "C0",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C1",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C2",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C5",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C2",
+   true,
+   0
+  ]
+ ]
+}

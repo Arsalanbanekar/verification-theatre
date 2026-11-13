@@ -1,0 +1,37 @@
+{
+ "model": "gpt-oss-20b",
+ "plan": "2513a458",
+ "order_seed": 0,
+ "cells": [
+  [
+   "real-01-t",
+   "C0",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C1",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C2",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C5",
+   false,
+   0
+  ],
+  [
+   "real-01-t",
+   "C2",
+   true,
+   0
+  ]
+ ]
+}

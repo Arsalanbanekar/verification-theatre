@@ -1,0 +1,52 @@
+{
+ "generated_utc": "2026-11-11T10:37:26.848281+00:00",
+ "study_responses": 21,
+ "study_cells_done": 20,
+ "study_cells_planned": 20,
+ "pilot_spend_usd": 0.011636,
+ "judge_model_id": null,
+ "judge_route": {
+  "order": [],
+  "allow_fallbacks": false,
+  "require_parameters": true
+ },
+ "judge_calls": 0,
+ "judge_valid": 0,
+ "judge_passed": null,
+ "judge_complete": false,
+ "judge_skipped": true,
+ "judge_verdict": "SKIPPED",
+ "judge_status": "skipped (--skip-judge)",
+ "projected_total_usd": 1.9621,
+ "projection_over_warning": false,
+ "projection": [
+  {
+   "model": "gpt-oss-120b",
+   "todo": 960,
+   "in_per_call": 1518.2814102564112,
+   "out_per_call": 146.4,
+   "usd_left": 0.30295892307692257
+  },
+  {
+   "model": "gpt-oss-20b",
+   "todo": 960,
+   "in_per_call": 1518.2814102564114,
+   "out_per_call": 161.2,
+   "usd_left": 0.15574186153846076
+  },
+  {
+   "model": "qwen3.8-27b",
+   "todo": 960,
+   "in_per_call": 1470.6995576431962,
+   "out_per_call": 94.33333333333333,
+   "usd_left": 1.4917372602699763
+  },
+  {
+   "model": "gemini-3.5-flash-lite",
+   "todo": 720,
+   "in_per_call": 1465.1072369471497,
+   "out_per_call": 102.4,
+   "usd_left": 0.0
+  }
+ ]
+}
