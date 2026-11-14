@@ -867,6 +867,8 @@ def build_slots(ctx: dict) -> dict:
         s["H4_SENTENCE"] = f"A plain-language interpreter stating each credential's scope {core}."
         s["H4_STAT"] = (f"interpreter − none = {stat(h4)}, across the three interpreter-arm models; without the "
                         f"interpreter, their C1/C2 acceptance was {signed(gap)} points relative to C0")
+        for c in ctx.get("h4_caveats", ()):   # e.g. a model whose interpreter arm failed to parse more often
+            s["H4_STAT"] += f". {c}"
     else:
         s["H4_SENTENCE"] = s["H4_STAT"] = "The interpreter arm was not available."
 
@@ -1125,6 +1127,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     per_model_df = pd.DataFrame(per_model)
     per_model_df.to_csv(out / "per_model.csv", index=False)
     pf = parse_failure_outputs(raw_dir, models, out)
+    rob = robustness_outputs(df, scope, models, fam, out)   # exploratory (DEVIATIONS.md)
+    caveats = h4_caveats(pf, fam)
     fig_paths = figures(out, acc, disc, stab, df)
 
     pooled_acc = acc[acc["model"] == "pooled"]
@@ -1158,14 +1162,14 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
            "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_text(cfg),
            "n_judged": str(n_scored), "kappa": kappa_text(gate, cfg), "scope_md": scope_md, "citation_md": citation_md,
            "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4"),
-           "scope_withheld": withheld_text(gate) if source == "withheld" else ""}
+           "scope_withheld": withheld_text(gate) if source == "withheld" else "", "h4_caveats": caveats}
     slots = build_slots(ctx)
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
     synthetic = bool(df["synthetic"].any())
     notes = draft_notes(draft_text)
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
-                             gate=gate, forced=forced, pf=pf)
+                             gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1174,6 +1178,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
         (out / "REPORT_DRAFT.filled.md").write_text(banner + filled_draft(draft_text, entries), encoding="utf-8",
                                                      newline="\n")
     return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "fam": fam,
+            "rob": rob, "caveats": caveats,
             "source": source, "gate": gate, "forced": forced, "figures": fig_paths, "problems": setting_problems}
 
 
@@ -1270,6 +1275,224 @@ def parse_failure_section(pf: dict | None) -> list[str]:
     return lines + ["", "Details per model: `python src/parse_failures.py --model <model>`.", ""]
 
 
+# ---------------------------------------------------------------- exploratory checks (DEVIATIONS.md, 15 Nov 2026)
+
+# Added after seeing the parse-failure pattern; not pre-registered. The pre-registered analysis keeps
+# treating parse failures as missing.
+ROBUSTNESS_MODEL = "qwen3.8-27b"
+HEADLINE_SET = {"H1": "real_obscure", "H2": "real_obscure", "H2b": "real_obscure", "H3": "real_obscure",
+                "H4": "all"}
+
+
+def conclusion(r: dict) -> str:
+    """What one primary test concludes. For H3 it is the §7 decision rule; for the others, the
+    direction when p_holm < .05, else no reliable difference."""
+    if not r or not r.get("n_pairs"):
+        return "n/a"
+    if r["hypothesis"] == "H3":
+        return "supported" if h3_verdict(r)[0] else "not supported"
+    if isnan(r.get("p_holm")):
+        return "n/a"
+    if r["p_holm"] < ALPHA:
+        return "higher" if r["delta"] > 0 else "lower"
+    return "no reliable difference"
+
+
+def label_of(r: dict) -> str:
+    return f"{r['hypothesis']} {r['comparison']}" + ("" if r["measure"] == "acceptance" else f", {r['measure']}")
+
+
+def brief(r: dict) -> str:
+    """'+12.0 (+3.0 to +21.0), p_holm 0.012, 9 pairs', or why there is no result."""
+    if not r or not r.get("n_pairs"):
+        return "n/a: every pair at the C0 ceiling" if r and r.get("n_ceiling_dropped") else "n/a"
+    return (f"{value(r)} ({value(r, 'ci_low')} to {value(r, 'ci_high')}), p_holm {fmt_p(r.get('p_holm'))}, "
+            f"{r['n_pairs']} pair{'s' if r['n_pairs'] != 1 else ''}")
+
+
+def outcome(conclusions) -> str:
+    """same / changes (between results that exist) / testable only in some / not testable."""
+    have = [c for c in conclusions if c != "n/a"]
+    if not have:
+        return "not testable"
+    if len(have) < len(conclusions):
+        return "testable only in some"
+    return "same" if len(set(have)) == 1 else "changes"
+
+
+def without_model(df, scope, models, fam, drop) -> pd.DataFrame:
+    """Exploratory check 1: every primary test on the pooled data without `drop`, beside the pooled
+    result with it. The whole procedure is re-run on the remaining models."""
+    kept = [m for m in models if m != drop]
+    if drop not in models or not kept:
+        return pd.DataFrame()
+    rows = []
+    for ctype, types in TYPE_SETS.items():
+        alt = primary_family(df, scope, kept, types, np.random.default_rng(SEED))
+        for b in (r for r in fam[("pooled", ctype)] if r["primary"]):
+            a = find(alt, b["hypothesis"], b["comparison"], b["measure"])
+            rows.append({"claim_type": ctype, "test": label_of(b), "hypothesis": b["hypothesis"],
+                         "all_models": brief(b), "without": brief(a), "conclusion_all_models": conclusion(b),
+                         "conclusion_without": conclusion(a),
+                         "outcome": outcome([conclusion(b), conclusion(a)]),
+                         "n_pairs_all_models": b.get("n_pairs", 0),
+                         "delta_all_models": b.get("delta"), "p_holm_all_models": b.get("p_holm"),
+                         "delta_without": a.get("delta"), "p_holm_without": a.get("p_holm"),
+                         "n_pairs_without": a.get("n_pairs", 0)})
+    return pd.DataFrame(rows)
+
+
+def with_failed_set(df, model, accepted: float) -> pd.DataFrame:
+    """A copy in which `model`'s parse-failed cells count as accepted = 0 or 1. Every other field of
+    those cells (confidence, reasons) stays missing."""
+    d = df.copy()
+    d.loc[(d["model"] == model) & (d["status"] == "parse_failed"), "accepted"] = float(accepted)
+    return d
+
+
+def failure_bounds(df, scope, fam, model) -> pd.DataFrame:
+    """Exploratory check 2: `model`'s primary tests re-run twice, with all its parse-failed cells set
+    to accept = false and then to accept = true, beside the pre-registered result (failures missing)."""
+    if (model, "all") not in fam:
+        return pd.DataFrame()
+    low, high = with_failed_set(df, model, 0.0), with_failed_set(df, model, 1.0)
+    rows = []
+    for ctype, types in TYPE_SETS.items():
+        lo = primary_family(low, scope, [model], types, np.random.default_rng(SEED))
+        hi = primary_family(high, scope, [model], types, np.random.default_rng(SEED))
+        for b in (r for r in fam[(model, ctype)] if r["primary"]):
+            f, t = (find(x, b["hypothesis"], b["comparison"], b["measure"]) for x in (lo, hi))
+            cs = (conclusion(b), conclusion(f), conclusion(t))
+            rows.append({"claim_type": ctype, "test": label_of(b), "hypothesis": b["hypothesis"],
+                         "missing": brief(b), "failed_false": brief(f), "failed_true": brief(t),
+                         "conclusion_missing": cs[0], "conclusion_false": cs[1], "conclusion_true": cs[2],
+                         "outcome": outcome(cs), "n_pairs_missing": b.get("n_pairs", 0),
+                         "n_pairs_false": f.get("n_pairs", 0), "n_pairs_true": t.get("n_pairs", 0),
+                         "delta_missing": b.get("delta"), "delta_false": f.get("delta"), "delta_true": t.get("delta"),
+                         "p_holm_missing": b.get("p_holm"), "p_holm_false": f.get("p_holm"),
+                         "p_holm_true": t.get("p_holm")})
+    return pd.DataFrame(rows)
+
+
+def robustness_outputs(df, scope, models, fam, out: Path, model: str = ROBUSTNESS_MODEL) -> dict:
+    if model not in models:
+        return {}
+    w, b = without_model(df, scope, models, fam, model), failure_bounds(df, scope, fam, model)
+    w.to_csv(out / "robustness_without_qwen.csv", index=False)
+    b.to_csv(out / "robustness_qwen_bounds.csv", index=False)
+    g = df[df["model"] == model]
+    return {"model": model, "without": w, "bounds": b, "n_failed": int((g["status"] == "parse_failed").sum()),
+            "n_cells": len(g)}
+
+
+def h4_caveats(pf: dict | None, fam) -> list[str]:
+    """For each interpreter-arm model whose C1/C2 parse-failure rate differs with the interpreter
+    (Fisher p < .05), the caveat its own H4 result carries."""
+    out = []
+    for c in (pf or {}).get("conc", []):
+        if "interp_p" not in c or not c["interp_p"] < ALPHA:
+            continue
+        a, b = c["interp_rate"], c["no_interp_rate"]
+        if a < b:
+            rel = "a lower parse-failure rate than"
+        elif b == 0:
+            rel = "parse failures, unlike"
+        elif abs(a / b - 2) < 0.05:
+            rel = "twice the parse-failure rate of"
+        else:
+            rel = f"{a / b:.1f} times the parse-failure rate of"
+        own = find(fam.get((c["model"], "all"), []), "H4", "interpreter vs none (C1, C2)")
+        own_txt = (f" (interpreter − none = {value(own)} points, 95% CI {value(own, 'ci_low')} to "
+                   f"{value(own, 'ci_high')})" if own.get("n_pairs") else "")
+        out.append(f"{c['model']}'s interpreter arm had {rel} the same conditions without it ({pct(a, 1)} vs "
+                   f"{pct(b, 1)}), so its own H4 result{own_txt} carries that caveat")
+    return out
+
+
+def h4_section(fam, models, caveats) -> list[str]:
+    pooled = find(fam[("pooled", "all")], "H4", "interpreter vs none (C1, C2)")
+    per = [(m, find(fam[(m, "all")], "H4", "interpreter vs none (C1, C2)")) for m in models]
+    per = [(m, r) for m, r in per if r.get("n_pairs")]
+    lines = ["## Interpreter arm (H4)", "",
+             f"Interpreter vs none on C1 and C2, all pairs. Pooled over the interpreter-arm models: {stat(pooled)}. "
+             + ("Per model: " + "; ".join(f"{m} {stat(r)}" for m, r in per) + "." if per else ""), ""]
+    lines += ([f"- {c}." for c in caveats] if caveats else
+              ["- The interpreter arm's parse-failure rate does not differ reliably from the same conditions "
+               "without it for any model."])
+    return lines + [""]
+
+
+def robustness_section(rob: dict) -> list[str]:
+    if not rob:
+        return []
+    m = rob["model"]
+    rate = rob["n_failed"] / rob["n_cells"] if rob["n_cells"] else float("nan")
+    lines = ["## Exploratory robustness checks (not pre-registered)", "",
+             f"**Exploratory.** These checks were added on 15 Nov 2026, after the parse-failure pattern was seen, "
+             f"and are recorded in `DEVIATIONS.md`. The pre-registered analysis above is unchanged: it treats parse "
+             f"failures as missing. They ask whether its conclusions depend on {m}, which failed to parse in "
+             f"{rob['n_failed']} of {rob['n_cells']} cells ({pct(rate, 1)}).", "",
+             "A conclusion is a test's direction when p_holm < .05, and \"no reliable difference\" otherwise; for "
+             "H3 it is the §7 decision rule. Each check re-runs the whole procedure: pair values, the C0-ceiling rule "
+             "and Holm over the eight tests. The tables show each test at its headline claim-type set; the CSVs "
+             "hold all three.", "",
+             "Every result gives its number of pairs. When every remaining pair is at the C0 ceiling, an inflation "
+             "test (H1, H2) has no pairs left and cannot be run; such tests are listed apart from conclusions that "
+             "change. A result on 2 or 3 pairs is too thin to read on its own.", ""]
+
+    def names(t: pd.DataFrame) -> str:
+        return "; ".join(f"{r['test']} ({TYPE_LABEL[r['claim_type']]})" for _, r in t.iterrows())
+
+    def verdict(t: pd.DataFrame, what: str, part_why: str) -> list[str]:
+        ch, part = t[t["outcome"] == "changes"], t[t["outcome"] == "testable only in some"]
+        none = t[t["outcome"] == "not testable"]
+        out = [f"Across all three claim-type sets ({len(t)} tests):",
+               f"- {len(ch)} conclusion{'s change' if len(ch) != 1 else ' changes'} {what}"
+               + (f": {names(ch)}." if len(ch) else ".")]
+        if len(part):
+            out.append(f"- {len(part)} test{'s are' if len(part) != 1 else ' is'} testable in only some of the analyses, "
+                       f"{part_why}: {names(part)}.")
+        if len(none):
+            out.append(f"- {len(none)} test{'s' if len(none) != 1 else ''} cannot be run in any of them: {names(none)}.")
+        return out
+
+    def cell(r, cols) -> str:
+        cs = [r[c] for c in cols]
+        return {"same": f"same: {cs[0]}", "changes": "**changes**: " + " / ".join(cs),
+                "testable only in some": "testable only in some: " + " / ".join(cs),
+                "not testable": "not testable"}[r["outcome"]]
+
+    def headline(t: pd.DataFrame) -> pd.DataFrame:
+        return t[[HEADLINE_SET.get(h) == c for h, c in zip(t["hypothesis"], t["claim_type"])]]
+
+    w = rob["without"]
+    if not w.empty:
+        lines += [f"### 1. Pooled, without {m}", "", f"| Test | Pairs | All models | Without {m} | Conclusion |",
+                  "|---|---|---|---|---|"]
+        for _, r in headline(w).iterrows():
+            lines.append(f"| {r['test']} | {TYPE_LABEL[r['claim_type']]} | {r['all_models']} | {r['without']} | "
+                         f"{cell(r, ['conclusion_all_models', 'conclusion_without'])} |")
+        lines += [""] + verdict(w, f"when {m} is left out",
+                               f"because without {m} every remaining pair is at the C0 ceiling") + [""]
+    b = rob["bounds"]
+    if not b.empty:
+        lines += [f"### 2. Bounds for {m}", "",
+                  f"Its primary comparisons are re-run with all its parse-failed cells set to accept = false, then to "
+                  f"accept = true. Confidence has no bound: the failed cells stay missing in the C3 vs C2 confidence "
+                  f"test. That test can still move, because the bounds change which pairs sit at the C0 ceiling and "
+                  f"the Holm adjustment.", "",
+                  "| Test | Pairs | Failures missing (pre-registered) | All failed = false | All failed = true | Conclusion |",
+                  "|---|---|---|---|---|---|"]
+        for _, r in headline(b).iterrows():
+            lines.append(f"| {r['test']} | {TYPE_LABEL[r['claim_type']]} | {r['missing']} | {r['failed_false']} | "
+                         f"{r['failed_true']} | {cell(r, ['conclusion_missing', 'conclusion_false', 'conclusion_true'])} |")
+        lines += ["", "Setting failed cells to false or true also changes which pairs sit at the C0 ceiling, so the "
+                  "number of pairs can differ between columns.", ""]
+        lines += verdict(b, "within these bounds",
+                         "because the C0-ceiling rule leaves no pairs under some of the treatments") + [""]
+    return lines
+
+
 def gate_line(gate: dict | None) -> str:
     """The §5 (rev 3.4) judge-agreement gate in one phrase."""
     g = gate or {}
@@ -1282,7 +1505,7 @@ def gate_line(gate: dict | None) -> str:
 
 
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
-                   gate=None, forced=False, pf=None) -> str:
+                   gate=None, forced=False, pf=None, rob=None, caveats=()) -> str:
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
@@ -1315,7 +1538,13 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "- README and Appendix A: give the collection dates above. They should fall within the sprint "
               "(13–15 Nov 2026); only the pilot (10–11 Nov, excluded from analysis) came before it.",
               "- §4.8: use the per-model table and the scale comparison below, and report each model's "
-              "parse-failure rate with whether failures concentrate in a condition (section \"Parse failures\").", *notes]
+              "parse-failure rate with whether failures concentrate in a condition (section \"Parse failures\").",
+              *notes]
+    if rob:
+        lines += ["- §4.7 and §5: the robustness checks below are exploratory (added after the parse-failure pattern "
+                  "was seen; `DEVIATIONS.md`); label them so wherever they are cited."]
+    if caveats:
+        lines += ["- §4.7: the slot carries the interpreter-arm parse-failure caveat; keep it with the H4 result."]
     if source == "withheld":
         lines += ["- §3.4 and §4.5: judge results are withheld (" + gate_line(gate) + "). Give the kappa, say that H3 "
                   "was not tested, and leave out the scope-accuracy table and examples."]
@@ -1380,6 +1609,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
         "scope: share scored 2": per_model_df["scope_correct_share"].map(pct),
         "parse failures": per_model_df["parse_failed_rate"].map(lambda v: pct(v, 1)),
         "cost USD": per_model_df["cost_usd"].map(lambda v: num(v, 2))})
+    lines += h4_section(fam, list(per_model_df["model"]), caveats)
     lines += ["## Per model", "",
               "Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs.", "",
               table_md(shown, list(shown.columns), list(shown.columns)), ""]
@@ -1391,6 +1621,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
                   f"{signed(pm.loc['gpt-oss-120b', 'h1_c1_vs_c0_real'])} vs "
                   f"{signed(pm.loc['gpt-oss-20b', 'h1_c1_vs_c0_real'])} points.", ""]
     lines += parse_failure_section(pf)
+    lines += robustness_section(rob)
     lines += ["## Files", "", "| File | Contents |", "|---|---|",
               "| `fig1_acceptance.png` | Figure 1 (§4.2): acceptance by condition, claim type and truth |",
               "| `fig2_discrimination.png` | Figure 2 (§4.4): discrimination index by condition |",
@@ -1408,6 +1639,9 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "| `per_model.csv` | Per-model summary (§4.8) |",
               "| `parse_failures_by_condition.csv` | Parse failures per model and condition, flagged over double the model's rate |",
               "| `parse_failure_types.csv` | What the failed generations looked like, per model |",
+              "| `robustness_without_qwen.csv` | Exploratory: every primary test, pooled, without qwen3.8-27b |",
+              "| `robustness_qwen_bounds.csv` | Exploratory: qwen3.8-27b's primary tests with its parse failures set "
+              "to accept = false, then true |",
               "| `example_justifications.md` | Candidate verbatim examples for §4.5 |",
               "| `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |"]
     return "\n".join(lines) + "\n"

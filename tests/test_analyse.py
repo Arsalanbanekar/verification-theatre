@@ -376,6 +376,92 @@ def test_parse_failures_are_missing_and_reported_by_condition(scenario):
     assert "twice the model's rate" in section or "no parse failures" in section
 
 
+# ---------------------------------------------------------------- exploratory checks (DEVIATIONS.md)
+
+def test_conclusion_and_outcome():
+    assert A.conclusion({}) == "n/a" and A.conclusion({"hypothesis": "H1", "n_pairs": 0}) == "n/a"
+    base = {"hypothesis": "H1", "n_pairs": 9, "delta": 0.2}
+    assert A.conclusion({**base, "p_holm": 0.01}) == "higher"
+    assert A.conclusion({**base, "delta": -0.2, "p_holm": 0.01}) == "lower"
+    assert A.conclusion({**base, "p_holm": 0.2}) == "no reliable difference"
+    assert A.conclusion({"hypothesis": "H3", "n_pairs": 9, "ci_high": 0.3, "p_holm": 0.01}) == "supported"
+    assert A.outcome(["lower", "lower"]) == "same" and A.outcome(["lower", "no reliable difference"]) == "changes"
+    assert A.outcome(["lower", "n/a", "lower"]) == "testable only in some" and A.outcome(["n/a", "n/a"]) == "not testable"
+    assert A.brief({"n_pairs": 0, "n_ceiling_dropped": 10}) == "n/a: every pair at the C0 ceiling"
+
+
+def test_bounds_change_only_that_models_failed_cells(scenario):
+    root, _ = scenario("effect")
+    df = A.load_responses(root / "raw", MODELS)
+    hit = (df["model"] == "qwen3.8-27b") & (df["status"] == "parse_failed")
+    assert hit.any()
+    for v in (0.0, 1.0):
+        d = A.with_failed_set(df, "qwen3.8-27b", v)
+        assert (d.loc[hit, "accepted"] == v).all() and d.loc[hit, "confidence"].isna().all()
+        assert d.loc[~hit, "accepted"].equals(df.loc[~hit, "accepted"])           # nothing else moves
+    assert df.loc[hit, "accepted"].isna().all()                                 # the original is untouched
+
+
+def test_exploratory_robustness_checks_are_written_and_labelled(scenario):
+    root, res = scenario("effect")
+    out = root / "results"
+    w, b = pd.read_csv(out / "robustness_without_qwen.csv"), pd.read_csv(out / "robustness_qwen_bounds.csv")
+    assert len(w) == len(b) == 24                                              # 8 primary tests x 3 claim-type sets
+    outcomes = {"same", "changes", "testable only in some", "not testable"}
+    assert set(w["outcome"]) <= outcomes and set(b["outcome"]) <= outcomes
+    df = A.load_responses(root / "raw", MODELS)
+    scope = pd.DataFrame(columns=["response_id", "score"])
+    kept = [m for m in MODELS if m != "qwen3.8-27b"]
+    h4 = A.find(A.primary_family(df, A.load_scope(root / "graded", res["source"], R.load_config(R.REPO / "models.yaml")),
+                                 kept, A.TYPES, np.random.default_rng(0)), "H4", "interpreter vs none (C1, C2)")
+    row = w[(w["hypothesis"] == "H4") & (w["claim_type"] == "all")].iloc[0]
+    assert row["delta_without"] == pytest.approx(h4["delta"])                  # really without qwen
+    low = A.primary_family(A.with_failed_set(df, "qwen3.8-27b", 0.0), scope, ["qwen3.8-27b"], ("real_obscure",),
+                           np.random.default_rng(0))
+    for (h, comp, meas), r in ((k, A.find(low, *k)) for k in (("H1", "C1 vs C0", "acceptance"),
+                                                              ("H4", "interpreter vs none (C1, C2)", "acceptance"))):
+        got = b[(b["test"] == A.label_of({"hypothesis": h, "comparison": comp, "measure": meas}))
+                & (b["claim_type"] == "real_obscure")].iloc[0]
+        assert got["delta_false"] == pytest.approx(r["delta"], nan_ok=True)    # the bound really sets them false
+    summary = (out / "results_summary.md").read_text(encoding="utf-8")
+    section = summary.split("## Exploratory robustness checks (not pre-registered)")[1].split("## Files")[0]
+    assert "**Exploratory.**" in section and "DEVIATIONS.md" in section and "treats parse failures as missing" in section
+    assert "### 1. Pooled, without qwen3.8-27b" in section and "### 2. Bounds for qwen3.8-27b" in section
+    assert section.count("Across all three claim-type sets (24 tests):") == 2
+    assert "exploratory" in summary.split("## Other text in REPORT_DRAFT.md to check")[1].split("##")[0]
+
+
+def test_h4_caveat_when_the_interpreter_arm_fails_more_often(scenario, tmp_path):
+    root, res = scenario("effect")
+    assert res["caveats"] == []                                                 # failures spread evenly: no caveat
+    assert "does not differ reliably" in (root / "results" / "results_summary.md").read_text(encoding="utf-8")
+    raw = tmp_path / "raw"
+    shutil.copytree(root / "raw", raw)
+    path = raw / "qwen3.8-27b.jsonl"
+    recs = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+    for interp, target in ((True, 38), (False, 19)):                            # the real pattern: 15.8% vs 7.9%
+        arm = [r for r in recs if r["interpreter"] == interp and r["condition"] in ("C1", "C2")]
+        for r in [r for r in arm if r["status"] == "ok"][:target - sum(r["status"] == "parse_failed" for r in arm)]:
+            r.update(status="parse_failed", parsed=None, raw_text="not json", parse_error="synthetic", attempt=2)
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    G.grade_metrics(R.load_config(R.REPO / "models.yaml"), raw, tmp_path / "graded")
+    res2 = run(tmp_path, raw, tmp_path / "graded")
+    (caveat,) = res2["caveats"]
+    assert caveat.startswith("qwen3.8-27b's interpreter arm had twice the parse-failure rate of the same conditions "
+                             "without it (15.8% vs 7.9%), so its own H4 result (interpreter − none = ")
+    assert caveat.endswith(") carries that caveat")
+    assert res2["slots"]["H4_STAT"].endswith(". " + caveat)                    # §4.7, the report's H4 section
+    h4_text = (tmp_path / "results" / "results_summary.md").read_text(encoding="utf-8").split(
+        "## Interpreter arm (H4)")[1].split("## Per model")[0]
+    assert caveat in h4_text and "Per model: " in h4_text
+    depth = 0
+    for ch in res2["slots"]["H4_STAT"]:
+        depth += (ch == "(") - (ch == ")")
+        assert depth <= 1
+    filled = (tmp_path / "results" / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8")
+    assert caveat + "." in filled.split("**4.7 Countermeasure (H4).**")[1].split("**4.8")[0]
+
+
 def test_a_model_logging_two_reasoning_settings_is_flagged(scenario, tmp_path):
     root, _ = scenario("null")
     raw = tmp_path / "raw"

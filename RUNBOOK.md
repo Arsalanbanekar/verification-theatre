@@ -448,6 +448,7 @@ Outputs in `data/results/`:
 | `example_justifications.md` | Candidate verbatim quotes for §4.5 |
 | `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs |
 | `parse_failures_by_condition.csv`, `parse_failure_types.csv` | Parse failures per model and condition, flagged where a rate is over double the model's own, and what the failed generations looked like. The summary's "Parse failures" section says whether they concentrate in a condition. |
+| `robustness_without_qwen.csv`, `robustness_qwen_bounds.csv` | Exploratory checks (`DEVIATIONS.md`, 15 Nov): every primary test pooled without qwen3.8-27b, and qwen3.8-27b's tests with its parse failures set to accept = false, then true |
 | `primary_tests.csv` and the other CSVs | Every number, per model and claim type |
 
 How to read the numbers:
@@ -462,6 +463,14 @@ How to read the numbers:
 - **Robustness section.** If it lists a disagreement between the t-test and the permutation
   test, report the t-test, which is the pre-specified primary, and give the permutation result
   beside it.
+- **Exploratory robustness checks.** They were added after the parse-failure pattern was seen,
+  so they are exploratory. Cite them only as such, never as pre-registered tests.
+  - The summary lists which conclusions change without qwen3.8-27b, and which change within its
+    parse-failure bounds.
+  - It lists separately the tests that cannot be run because every pair is at the C0 ceiling.
+- **H4 and parse failures.** The "Interpreter arm (H4)" section, and the §4.7 slot, state any
+  model whose interpreter arm failed to parse more often than the same conditions without it.
+  qwen3.8-27b's does, at 15.8% against 7.9%; keep that caveat beside its H4 result.
 - **Small samples.** With 10 real-obscure pairs, a modest effect can miss significance. Say so
   using the CI rather than calling it "no effect". The generated sentences already do this.
 
