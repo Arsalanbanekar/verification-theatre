@@ -350,6 +350,32 @@ def test_partial_data_runs_and_pilot_files_are_ignored(scenario, tmp_path):
     assert not re.search(r"\bnan\b", " ".join(res["slots"].values()))
 
 
+def test_parse_failures_are_missing_and_reported_by_condition(scenario):
+    root, res = scenario("effect")
+    df = A.load_responses(root / "raw", MODELS)
+    failed = df[df["status"] == "parse_failed"]
+    assert len(failed) > 0
+    for col_name in ("accepted", "confidence", "mark_cited", "abstained"):
+        assert failed[col_name].isna().all(), col_name
+    ok = df[df["status"] == "ok"]
+    acc = A.acceptance_table(df)
+    assert acc[acc["model"] != "pooled"]["n_responses"].sum() == len(ok)       # failures in no denominator
+    rng = lambda: np.random.default_rng(0)                                     # noqa: E731
+    with_f = A.primary_family(df, pd.DataFrame(columns=["response_id", "score"]), MODELS, A.TYPES, rng())
+    without = A.primary_family(ok, pd.DataFrame(columns=["response_id", "score"]), MODELS, A.TYPES, rng())
+    for a, b in zip(with_f, without):                                         # the same as dropping them
+        assert (a["n_pairs"], a["comparison"]) == (b["n_pairs"], b["comparison"])
+        assert a["delta"] == pytest.approx(b["delta"], nan_ok=True)
+    table = pd.read_csv(root / "results" / "parse_failures_by_condition.csv")
+    assert table["failed"].sum() == len(failed) and set(table["arm"]) == set(A.PF.ARMS)
+    assert table.groupby("model")["cells"].sum().to_dict() == df.groupby("model").size().to_dict()
+    summary = (root / "results" / "results_summary.md").read_text(encoding="utf-8")
+    section = summary.split("## Parse failures")[1].split("## Files")[0]
+    assert "| Model | C0 | C1 | C2 | C3 | C4 | C5 | C1+I | C2+I | all |" in section
+    assert "nothing is imputed" in section and all(m in section for m in MODELS)
+    assert "twice the model's rate" in section or "no parse failures" in section
+
+
 def test_a_model_logging_two_reasoning_settings_is_flagged(scenario, tmp_path):
     root, _ = scenario("null")
     raw = tmp_path / "raw"

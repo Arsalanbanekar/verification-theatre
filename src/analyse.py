@@ -44,6 +44,7 @@ if __package__ in (None, ""):
 
 from src import grade as G
 from src import judge as J
+from src import parse_failures as PF
 from src import runner as R
 
 REPO = R.REPO
@@ -1123,6 +1124,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
             "cost_usd": pf.get(m, {}).get("cost_usd", "")})
     per_model_df = pd.DataFrame(per_model)
     per_model_df.to_csv(out / "per_model.csv", index=False)
+    pf = parse_failure_outputs(raw_dir, models, out)
     fig_paths = figures(out, acc, disc, stab, df)
 
     pooled_acc = acc[acc["model"] == "pooled"]
@@ -1163,7 +1165,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     synthetic = bool(df["synthetic"].any())
     notes = draft_notes(draft_text)
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
-                             gate=gate, forced=forced)
+                             gate=gate, forced=forced, pf=pf)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1212,6 +1214,62 @@ def draft_notes(draft_text: str) -> list[str]:
     return notes
 
 
+def parse_failure_outputs(raw_dir: Path, models, out: Path) -> dict:
+    """Parse failures per model and condition, their types, and whether they concentrate in a condition.
+    Parse failures are missing data throughout the analysis; this only describes where they fall."""
+    cells = PF.cell_frame(raw_dir, models)
+    arms = PF.by_arm(cells)
+    arms.to_csv(out / "parse_failures_by_condition.csv", index=False)
+    types = PF.type_table(raw_dir, models)
+    types.to_csv(out / "parse_failure_types.csv", index=False)
+    lost = {}
+    for m, g in cells.groupby("model", sort=False):
+        per = g.groupby(["claim_id", "arm"])["failed"].agg(["sum", "count"])
+        lost[m] = int((per["sum"] == per["count"]).sum())
+    return {"arms": arms, "types": types, "lost": lost,
+            "conc": [PF.concentration(cells, m) for m in models if (cells["model"] == m).any()],
+            "partial": {m: PF.partial_accept(cells, m) for m in models if cells[cells["model"] == m]["failed"].any()}}
+
+
+def parse_failure_section(pf: dict | None) -> list[str]:
+    if not pf or pf["arms"].empty:
+        return []
+    arms = pf["arms"]
+    present = [a for a in PF.ARMS if a in set(arms["arm"])]
+    rows = ["| Model | " + " | ".join(present) + " | all |", "|---|" + "---|" * (len(present) + 1)]
+    for m, g in arms.groupby("model", sort=False):
+        by = {r["arm"]: r for _, r in g.iterrows()}
+        cell = []
+        for a in present:
+            if a not in by:
+                cell.append("–")
+                continue
+            r = by[a]
+            text = f"{int(r['failed'])}/{int(r['cells'])} ({pct(r['rate'], 1)})"
+            cell.append(f"**{text}**" if r["over_double"] else text)
+        k, n = int(g["failed"].sum()), int(g["cells"].sum())
+        rows.append(f"| {m} | " + " | ".join(cell) + f" | {k}/{n} ({pct(k / n, 1)}) |")
+    lines = ["## Parse failures", "",
+             "A parse failure is a cell whose answer failed to parse on both attempts. It is missing data: "
+             "nothing is imputed, and every rate, pair value and test uses the parsed responses only (a claim's "
+             "value in a condition is its mean over the reps that parsed). Failed cells per model and condition "
+             "(+I: with the interpreter); **bold** marks a rate over double the model's own rate. That criterion "
+             "and the χ² test are descriptive checks, not pre-registered.", "", *rows, ""]
+    lines += [f"- {PF.concentration_text(c)}" for c in pf["conc"]]
+    lost = {m: v for m, v in pf["lost"].items() if v}
+    lines += [f"- Claim × condition cells in which every rep failed, so the claim drops out of that condition: "
+              + (", ".join(f"{m} {v}" for m, v in lost.items()) if lost else "none") + "."]
+    types = pf["types"]
+    for m, g in types.groupby("model", sort=False):
+        lines.append(f"- {m}, failure types (final attempt of each failed cell; all failed attempts in brackets): "
+                     + "; ".join(f"{r['type']} {r['failed_cells']} ({r['all_failed_attempts']})"
+                                 for _, r in g.iterrows()) + ".")
+    for m, p in pf["partial"].items():
+        lines.append(f"- {m}, descriptive only: the final attempts of failed cells had already written accept "
+                     f"{p['failed']}; parsed cells: {p['parsed']}. Not used as data.")
+    return lines + ["", "Details per model: `python src/parse_failures.py --model <model>`.", ""]
+
+
 def gate_line(gate: dict | None) -> str:
     """The §5 (rev 3.4) judge-agreement gate in one phrase."""
     g = gate or {}
@@ -1224,7 +1282,7 @@ def gate_line(gate: dict | None) -> str:
 
 
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
-                   gate=None, forced=False) -> str:
+                   gate=None, forced=False, pf=None) -> str:
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
@@ -1256,7 +1314,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "- §3 cites `DEVIATIONS.md`: list any deviations there, or state that there were none.",
               "- README and Appendix A: give the collection dates above. They should fall within the sprint "
               "(13–15 Nov 2026); only the pilot (10–11 Nov, excluded from analysis) came before it.",
-              "- §4.8: use the per-model table and the scale comparison below.", *notes]
+              "- §4.8: use the per-model table and the scale comparison below, and report each model's "
+              "parse-failure rate with whether failures concentrate in a condition (section \"Parse failures\").", *notes]
     if source == "withheld":
         lines += ["- §3.4 and §4.5: judge results are withheld (" + gate_line(gate) + "). Give the kappa, say that H3 "
                   "was not tested, and leave out the scope-accuracy table and examples."]
@@ -1331,6 +1390,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
                   f"{pct(pm.loc['gpt-oss-20b', 'scope_correct_share'])} for gpt-oss-20b. C1 − C0 on real-obscure pairs: "
                   f"{signed(pm.loc['gpt-oss-120b', 'h1_c1_vs_c0_real'])} vs "
                   f"{signed(pm.loc['gpt-oss-20b', 'h1_c1_vs_c0_real'])} points.", ""]
+    lines += parse_failure_section(pf)
     lines += ["## Files", "", "| File | Contents |", "|---|---|",
               "| `fig1_acceptance.png` | Figure 1 (§4.2): acceptance by condition, claim type and truth |",
               "| `fig2_discrimination.png` | Figure 2 (§4.4): discrimination index by condition |",
@@ -1346,6 +1406,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "| `h5_unrecognised_sources.csv` | H5 (exploratory) |",
               "| `rep_variance.csv` | Repetition variance (§7) |",
               "| `per_model.csv` | Per-model summary (§4.8) |",
+              "| `parse_failures_by_condition.csv` | Parse failures per model and condition, flagged over double the model's rate |",
+              "| `parse_failure_types.csv` | What the failed generations looked like, per model |",
               "| `example_justifications.md` | Candidate verbatim examples for §4.5 |",
               "| `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |"]
     return "\n".join(lines) + "\n"

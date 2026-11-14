@@ -447,6 +447,7 @@ Outputs in `data/results/`:
 | `fig3_scope_accuracy.png`, `fig4_interpreter.png` | Optional figures for §4.5 and §4.7 |
 | `example_justifications.md` | Candidate verbatim quotes for §4.5 |
 | `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs |
+| `parse_failures_by_condition.csv`, `parse_failure_types.csv` | Parse failures per model and condition, flagged where a rate is over double the model's own, and what the failed generations looked like. The summary's "Parse failures" section says whether they concentrate in a condition. |
 | `primary_tests.csv` and the other CSVs | Every number, per model and claim type |
 
 How to read the numbers:
@@ -500,7 +501,7 @@ git commit -m "Analysis results"
 | State `CRASHED: ... (see events log)` | An unexpected error in that model's worker; the others continue | Read the traceback in `data/logs/<model>.events.jsonl` (event `crash`), then re-run. If it crashes on the same cell every time, record it in `DEVIATIONS.md` and run the other models with `--models`. |
 | Laptop slept, Wi-Fi dropped, or the terminal closed | Calls failed or the process died | Re-run `python src/runner.py`. Nothing is lost except calls in flight. |
 | Events log shows `json_validate_failed` (Qwen) | Groq's schema check rejected the model's answer (HTTP 400) | Nothing; this is handled. The generated text is parsed like any reply, retried once with the next seed, then recorded as `parse_failed` if it still fails. The raw line keeps the generated text. |
-| Many `parse_failed` for one model | The model returns invalid JSON | Do not change settings mid-run. Look at `raw_text` and `finish_reason` in `data/raw/<model>.jsonl`. Report the rate per model (it is in `per_model.csv`). |
+| Many `parse_failed` for one model | The model returns invalid JSON | Do not change settings mid-run, and do not re-run the failed cells: they are missing data. `python src/parse_failures.py --model <model>` breaks them down by condition, interpreter, claim type and truth, and by failure type (read-only). Report the rate per model and whether failures concentrate in a condition (`results_summary.md`, "Parse failures"). |
 | `No model has an API key; nothing to do.` | `.env` not found | Run from the repository folder; check `.env` |
 
 **The judges**
