@@ -79,6 +79,9 @@ judges:
     reasoning: provider default  # Adaption has no reasoning parameter; logged with every call
     json_mode: none              # no JSON mode on Adaption: the prompt asks for JSON and the parser validates every reply
     max_output_tokens: 4000      # includes reasoning tokens
+    # One re-ask, with these settings, of each reply cut off at max_output_tokens: 30 of the 600 were
+    # (DEVIATIONS.md, 16 Nov 2026). grade.py --rejudge-truncated; nothing else is re-judged.
+    rejudge: {max_output_tokens: 12000, request_timeout_s: 600}
     concurrency: 8
     limits: {rpm: 120}           # Adaption documents no rate limits; this only spaces the calls
     price_credits_per_mtok: {input: 1.40, cached_input: 0.26, output: 4.40}   # Adaption models page, 15 Nov 2026

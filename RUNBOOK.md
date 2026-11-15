@@ -110,7 +110,7 @@ python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/g
 The last lines should be:
 ```
 results -> data\synthetic\results
-  scope-accuracy source: judge (the judges' weighted kappa is 0.87 on 79 responses, at least 0.6: judge results are reported); 28 draft slots filled automatically, 0 need a hand fill
+  scope-accuracy source: judge (the judges' weighted kappa is 0.87 on 79 responses, at least 0.6: judge results are reported); 29 draft slots filled automatically, 0 need a hand fill
 ```
 Open `data/synthetic/results/results_summary.md`, `REPORT_DRAFT.filled.md` and the four PNGs.
 The fake data raises acceptance in C1–C4, separates the twins in C5, and has the interpreter
@@ -205,7 +205,7 @@ run. Since 15 Nov 2026 it is glm-5.2 on Adaption, with no cross-check (`DEVIATIO
 | 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
 | 6 | Choose the judge and commit `models.yaml` (done 15 Nov: glm-5.2 via Adaption, `e578ba5`) | section 9a | 30 min |
 | 7 | Pilot judge check (done 15 Nov: 10/10 valid, PASS, `e64307a`) | `python src/runner.py --pilot` | a few minutes |
-| 8 | Main judge, once all four models are done | `python src/grade.py --judge` | 15–45 min |
+| 8 | Main judge, once all four models are done; then one re-ask of any judgement cut off at the cap | `python src/grade.py --judge`, then `python src/grade.py --rejudge-truncated` | 15–45 min |
 | 9 | Analysis | `python src/analyse.py` | 2 min |
 | 10 | Write up, check, submit | sections 13–14 | |
 
@@ -364,6 +364,20 @@ No cross-check judge: it was dropped (15 Nov 2026, by the author's decision; see
   the prices in `models.yaml`. Adaption also reports each call's cost in its usage, which is logged
   with every call; the two agreed on every pilot call.
 
+**9b, continued: one re-ask of judgements cut off at the cap** (`DEVIATIONS.md`, 16 Nov 2026). In the main
+judging, 30 of 600 replies spent the whole 4,000-token cap on reasoning and returned no score
+(`incomplete: max_output_tokens`). Each such judgement is re-asked once, with `judges.main.rejudge`
+in `models.yaml` (12,000 tokens):
+```
+python src/grade.py --rejudge-truncated
+```
+- **What it re-asks.** Only responses whose single judgement was cut off at the cap, with the same
+  prompt. Nothing else is re-judged.
+- **The new rows.** They are appended to `judge_main.jsonl` with stage `rejudge`. The analysis uses
+  each response's latest judgement.
+- **Once each.** A response re-asked once has two rows and is never asked again. A re-run says
+  `No judgement cut off at max_output_tokens is waiting for its one re-ask.`
+
 **9c. The cross-check judge: dropped** (`DEVIATIONS.md`, 15 Nov 2026). `python src/grade.py
 --crosscheck` refuses:
 ```
@@ -408,7 +422,7 @@ python src/analyse.py
 ```
 ```
 results -> data\results
-  scope-accuracy source: exploratory (no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be evaluated: the main judge's scores are exploratory and unvalidated, and confirmatory H3 is not tested); 28 draft slots filled automatically, 0 need a hand fill
+  scope-accuracy source: exploratory (no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be evaluated: the main judge's scores are exploratory and unvalidated, and confirmatory H3 is not tested); 29 draft slots filled automatically, 0 need a hand fill
   EXPLORATORY: every scope-accuracy number is exploratory and unvalidated (one judge, no cross-check); confirmatory H3 is not tested; h3_exploratory.csv holds H3's statistic outside the Holm family
 ```
 - The source reads one of four values:
@@ -441,6 +455,7 @@ Outputs in `data/results/`:
 | `example_justifications.md` | Candidate verbatim quotes for §4.5, with exploratory, unvalidated scores |
 | `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs (exploratory, unvalidated) |
 | `h3_exploratory.csv` | H3's statistic on the one judge's scores, per scope and claim type, outside the Holm family |
+| `interpreter_discrimination.csv` | Exploratory (`DEVIATIONS.md`, 16 Nov): the discrimination index on C1 and C2 with and without the interpreter, per model and pooled, with true and false acceptance |
 | `parse_failures_by_condition.csv`, `parse_failure_types.csv` | Parse failures per model and condition, flagged where a rate is over double the model's own, and what the failed generations looked like. The summary's "Parse failures" section says whether they concentrate in a condition. |
 | `robustness_without_qwen.csv`, `robustness_qwen_bounds.csv` | Exploratory checks (`DEVIATIONS.md`, 15 Nov): every primary test pooled without qwen3.8-27b, and qwen3.8-27b's tests with its parse failures set to accept = false, then true |
 | `primary_tests.csv` and the other CSVs | Every number, per model and claim type |
@@ -457,6 +472,12 @@ How to read the numbers:
   - It gives the full 0/1/2 distribution and the share mentioning the credential, all with CIs.
   - It also reads H3's statistic against the rule, outside the Holm family. Cite all of these
     only as exploratory and unvalidated.
+- **Interpreter: accuracy or only acceptance?** The "Interpreter arm (H4)" section ends with an
+  exploratory table and the §4.7 slot `{INTERPRETER ACCURACY ...}`. Both were added after the results
+  were seen (`DEVIATIONS.md`, 16 Nov), so cite them only as exploratory.
+  - They compare the discrimination index with and without the interpreter.
+  - A drop in acceptance with no gain in the index means the interpreter lowered acceptance of true
+    and false claims alike.
 - **Robustness section.** If it lists a disagreement between the t-test and the permutation
   test, report the t-test, which is the pre-specified primary, and give the permutation result
   beside it.

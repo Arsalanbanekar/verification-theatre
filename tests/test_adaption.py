@@ -156,6 +156,7 @@ def test_models_yaml_names_glm_5_2_on_adaption():
     j = J.judge_config(cfg, "main")
     assert (j["provider"], j["model_id"], j["temperature"]) == ("adaption", "glm-5.2", 0.0)
     assert J.config_problems(cfg, "main") == []
+    assert j["max_output_tokens"] == 4000 and j["rejudge"]["max_output_tokens"] == 12000   # DEVIATIONS.md, 16 Nov
 
 
 def test_judge_run_logs_credits_and_stops_at_its_credit_budget(client, tmp_path, monkeypatch):

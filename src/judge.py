@@ -423,8 +423,10 @@ class JudgeRun:
         """The main thread waits here, so Ctrl+C lands here (tests replace it to simulate one)."""
         thread.join(timeout=0.5)
 
-    def run(self, items: list[Item], limit: int | None = None) -> dict:
-        done = judged(self.out_path, self.model_id)
+    def run(self, items: list[Item], limit: int | None = None, reask: bool = False) -> dict:
+        """Judge the items not yet judged by this model; with reask, judge every item given (the caller
+        has chosen them, as grade.py --rejudge-truncated does)."""
+        done = {} if reask else judged(self.out_path, self.model_id)
         todo = [it for it in items if it.response_id not in done]
         self.total, self.before = len(items), len(items) - len(todo)
         if limit is not None:

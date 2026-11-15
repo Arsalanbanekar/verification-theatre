@@ -176,12 +176,12 @@ def test_every_draft_placeholder_maps_to_a_slot():
     entries = A.placeholder_entries(text, {})
     assert entries[0]["slot"] == "_INSTRUCTION"
     slots = [e["slot"] for e in entries[1:]]
-    assert None not in slots and len(slots) == 28
+    assert None not in slots and len(slots) == 29
     assert slots == ["N_MODELS", "HEADLINE", "DISC_ABSTRACT", "H4_SENTENCE", "H5_ABSTRACT", "RESULT_PHRASE",
                      "MODELS_PARAGRAPH", "SETTINGS", "JUDGE_MODEL", "N_JUDGED", "KAPPA",
                      "C0_real_true", "C0_real_false", "C0_inv_true", "C0_inv_false", "C0_SENTENCE",
                      "H1_STAT", "C32_STAT", "C41_STAT", "H2_SENTENCE", "DISCRIMINATION",
-                     "SCOPE_TABLE", "CITATION_TABLE", "H5_DELTA", "H5_46", "H4_STAT", "N_STUDY_MODELS",
+                     "SCOPE_TABLE", "CITATION_TABLE", "H5_DELTA", "H5_46", "H4_STAT", "H4_DISC", "N_STUDY_MODELS",
                      "BASELINE_CEILING"]
     # robust to re-wrapping: one line per paragraph gives the same mapping
     unwrapped = re.sub(r"(?<=\S)\n(?=[^\n#>|\-\d])", " ", text)
@@ -548,6 +548,30 @@ def test_exploratory_scores_are_labelled_and_h3_is_not_tested(tmp_path):
     filled = " ".join((out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8").split())
     assert "Scope accuracy by condition Scope accuracy is exploratory and unvalidated: one judge scored it" in filled
     assert "no human labels are used. The pre-registered cross-check by a second judge was dropped" in filled
+
+
+def test_interpreter_discrimination_is_exploratory_and_moves_nothing_else(scenario):
+    """Exploratory (DEVIATIONS.md, 16 Nov 2026): the discrimination index with and without the interpreter, per
+    interpreter-arm model and pooled, beside the true and false acceptance it comes from."""
+    root, res = scenario("effect")
+    out = root / "results"
+    d = pd.read_csv(out / "interpreter_discrimination.csv")
+    im = ["gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b"]                  # gemini has no interpreter arm
+    assert set(d["model_scope"]) == {"pooled", *im} and len(d) == 12 and set(d["analysis"]) == {"exploratory"}
+    r = d[(d["model_scope"] == "pooled") & (d["claim_type"] == "all")].iloc[0]
+    assert r["n_pairs"] == 20 and r["delta"] == pytest.approx(r["disc_with"] - r["disc_without"])
+    for i in ("without", "with"):                                       # the index is true minus false acceptance
+        assert r[f"disc_{i}"] == pytest.approx(r[f"acc_true_{i}"] - r[f"acc_false_{i}"])
+        assert r[f"disc_{i}"] == pytest.approx((r[f"disc_C1_{i}"] + r[f"disc_C2_{i}"]) / 2)
+    h4 = A.find(res["fam"][("pooled", "all")], "H4", "interpreter vs none (C1, C2)")
+    accept = ((r["acc_true_with"] + r["acc_false_with"]) - (r["acc_true_without"] + r["acc_false_without"])) / 2
+    assert accept == pytest.approx(h4["delta"])                         # the same acceptance change H4 tests
+    sentence = res["slots"]["H4_DISC"]
+    assert sentence.startswith("Exploratory, added after the results were seen") and "discrimination index" in sentence
+    summary = (out / "results_summary.md").read_text(encoding="utf-8")
+    assert "### Exploratory: accuracy or only acceptance?" in summary and sentence in summary
+    filled = " ".join((out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8").split())
+    assert "Interpreter vs none on C1/C2: " in filled and sentence in filled
 
 
 def test_partial_data_runs_and_pilot_files_are_ignored(scenario, tmp_path):

@@ -580,6 +580,71 @@ def exploratory_h3(df, scope, models) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def interpreter_discrimination(df, models) -> pd.DataFrame:
+    """Exploratory, added after the results were seen (DEVIATIONS.md, 16 Nov 2026): does the interpreter improve
+    accuracy, or only lower acceptance across the board? Per interpreter-arm model and pooled over them, per
+    claim-type set: the discrimination index (true minus false twin) on C1 and C2 with and without the
+    interpreter; the change in its C1/C2 mean (paired t-test over pairs, with minus without, outside the Holm
+    family, so p is unadjusted); and the true and false acceptance it comes from. Its own random stream, so no
+    other result changes."""
+    rng = np.random.default_rng(SEED + 4)
+    im = [m for m in models if ((df["model"] == m) & df["interpreter"]).any()]
+    rows = []
+
+    def mean_of(x) -> float:
+        return float(x.mean()) if len(x) else np.nan
+
+    for scope_name, ms in ([("pooled", im)] if im else []) + [(m, [m]) for m in im]:
+        for ctype, types in TYPE_SETS.items():
+            disc, true_, false_ = ({i: subset(pair_values(df, ms, i, which), types) for i in (False, True)}
+                                   for which in ("disc", True, False))
+            arm = [c for c in ("C1", "C2") if all(c in w for w in (*disc.values(), *true_.values(), *false_.values()))]
+            row = {"model_scope": scope_name, "claim_type": ctype, "analysis": "exploratory", "unit": "pp"}
+            if not arm:
+                rows.append({**row, **EMPTY})
+                continue
+
+            def arm_mean(w: pd.DataFrame) -> pd.Series:
+                return w[arm].mean(axis=1)
+
+            for c in arm:
+                row[f"disc_{c}_without"], row[f"disc_{c}_with"] = mean_of(disc[False][c]), mean_of(disc[True][c])
+            a, b = arm_mean(disc[False]), arm_mean(disc[True])
+            row.update({**paired(a, b, rng), "disc_without": mean_of(a), "disc_with": mean_of(b),
+                        "acc_true_without": mean_of(arm_mean(true_[False])), "acc_true_with": mean_of(arm_mean(true_[True])),
+                        "acc_false_without": mean_of(arm_mean(false_[False])),
+                        "acc_false_with": mean_of(arm_mean(false_[True]))})
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def interp_disc_row(idisc: pd.DataFrame, scope_name: str, ctype: str) -> dict:
+    if idisc is None or idisc.empty:
+        return {}
+    r = idisc[(idisc["model_scope"] == scope_name) & (idisc["claim_type"] == ctype)]
+    return r.iloc[0].to_dict() if len(r) else {}
+
+
+def interp_disc_sentence(r: dict) -> str:
+    """The exploratory answer for the H4_DISC slot (§4.7): did the interpreter improve discrimination on C1 and C2,
+    or only lower acceptance?"""
+    if not r or not r.get("n_pairs"):
+        return "The interpreter arm's discrimination index was not available."
+    lead = ("Exploratory, added after the results were seen (`DEVIATIONS.md`): with the interpreter, acceptance on C1 "
+            f"and C2 went from {pct(r['acc_true_without'])} to {pct(r['acc_true_with'])} for true claims and from "
+            f"{pct(r['acc_false_without'])} to {pct(r['acc_false_with'])} for false ones, and the discrimination index "
+            f"from {signed(r['disc_without'], 100)} to {signed(r['disc_with'], 100)} points, a change of "
+            f"{stat(r, adjusted=False)}.")
+    both_fell = r["acc_true_with"] < r["acc_true_without"] and r["acc_false_with"] < r["acc_false_without"]
+    if not testable(r):
+        return f"{lead} The change in discrimination is not testable, because {why_not(r)}."
+    if r["p"] < ALPHA:
+        return lead + (" So the interpreter improved accuracy as well as changing acceptance." if r["delta"] > 0 else
+                       " So the interpreter also reduced discrimination: it made accuracy worse, not better.")
+    return lead + (" So it lowered acceptance of true and false claims alike, without a reliable gain in accuracy."
+                   if both_fell else " The discrimination index did not reliably change.")
+
+
 def h3x_row(h3x: pd.DataFrame, scope_name: str, ctype: str) -> dict:
     if h3x is None or h3x.empty:
         return {}
@@ -1240,7 +1305,7 @@ def build_slots(ctx: dict) -> dict:
         s["C0_SENTENCE"] = "C0 data were not available."
     s["BASELINE_CEILING"] = baseline_ceiling_text(ctx, [h1, c32, c32c, c41, c43])   # Appendix A
 
-    for k in ("SETTINGS", "MODELS_PARAGRAPH", "JUDGE_MODEL", "N_JUDGED", "KAPPA"):
+    for k in ("SETTINGS", "MODELS_PARAGRAPH", "JUDGE_MODEL", "N_JUDGED", "KAPPA", "H4_DISC"):
         s[k] = ctx[k.lower()]
     return s
 
@@ -1276,6 +1341,7 @@ SLOT_RULES = [
     (r"Δ$", r"invented items: $", "H5_DELTA"),
     (r"DID A CREDENTIAL RESCUE\b", None, "H5_46"),
     (r"BASELINE CEILING\b", None, "BASELINE_CEILING"),
+    (r"INTERPRETER ACCURACY\b", None, "H4_DISC"),
 ]
 
 
@@ -1452,6 +1518,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     h3x = exploratory_h3(df, scope, models) if exploratory else pd.DataFrame()
     if exploratory:
         h3x.to_csv(out / "h3_exploratory.csv", index=False)
+    idisc = interpreter_discrimination(df, models)   # exploratory (DEVIATIONS.md, 16 Nov 2026)
+    idisc.to_csv(out / "interpreter_discrimination.csv", index=False)
 
     # H1 on false twins alone and H5: with the C0-ceiling rule, and the full-sample result beside each (§7)
     ceil, false_only = ceiling_pairs(df, models), pair_values(df, models, False, False)
@@ -1543,7 +1611,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
            "n_judged": str(n_scored), "kappa": kappa_text(gate, cfg), "scope_md": scope_md, "citation_md": citation_md,
            "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4"),
            "scope_withheld": withheld_text(gate) if source == "withheld" else "", "h4_caveats": caveats,
-           "h3x": h3x_row(h3x, "pooled", "real_obscure") if exploratory else None}
+           "h3x": h3x_row(h3x, "pooled", "real_obscure") if exploratory else None,
+           "h4_disc": interp_disc_sentence(interp_disc_row(idisc, "pooled", "all"))}
     slots = build_slots(ctx)
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
@@ -1552,7 +1621,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
                              gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats,
                              baseline=baseline_section(c0tab, c0, fam, models), h3x=h3x, judge=ctx["judge_model"],
-                             commit=analysis_commit(out))
+                             commit=analysis_commit(out), idisc=idisc)
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1795,7 +1864,7 @@ def h4_caveats(pf: dict | None, fam) -> list[str]:
     return out
 
 
-def h4_section(fam, models, caveats) -> list[str]:
+def h4_section(fam, models, caveats, idisc=None) -> list[str]:
     pooled = find(fam[("pooled", "all")], "H4", "interpreter vs none (C1, C2)")
     per = [(m, find(fam[(m, "all")], "H4", "interpreter vs none (C1, C2)")) for m in models]
     per = [(m, r) for m, r in per if r.get("n_pairs")]
@@ -1805,7 +1874,28 @@ def h4_section(fam, models, caveats) -> list[str]:
     lines += ([f"- {c}." for c in caveats] if caveats else
               ["- The interpreter arm's parse-failure rate does not differ reliably from the same conditions "
                "without it for any model."])
-    return lines + [""]
+    lines += [""]
+    if idisc is not None and not idisc.empty and idisc["n_pairs"].fillna(0).any():
+        lines += ["### Exploratory: accuracy or only acceptance?", "",
+                  "**Exploratory, added after the results were seen (`DEVIATIONS.md`, 16 Nov 2026).** The discrimination "
+                  "index (acceptance of the true twin minus the false twin) on C1 and C2, with and without the "
+                  "interpreter, beside the acceptance of true and false claims it comes from. Each value is the C1/C2 "
+                  "mean, in points. The change is with minus without, a paired t-test over pairs. It is outside the "
+                  "Holm family, so p is unadjusted (`interpreter_discrimination.csv`, which also has C1 and C2 apart).",
+                  "", interp_disc_sentence(interp_disc_row(idisc, "pooled", "all")), "",
+                  "| Scope | Pairs | n | discrimination without → with | change (95% CI) | p (unadjusted) | "
+                  "true accepted without → with | false accepted without → with |", "|---|---|---|---|---|---|---|---|"]
+        for r in idisc.to_dict("records"):
+            if not r.get("n_pairs"):
+                continue
+            ch = (f"{value(r)} ({value(r, 'ci_low')} to {value(r, 'ci_high')})" if testable(r)
+                  else f"{value(r)} (not testable: {why_short(r)})")
+            lines.append(f"| {r['model_scope']} | {TYPE_LABEL[r['claim_type']]} | {int(r['n_pairs'])} | "
+                         f"{signed(r['disc_without'], 100)} → {signed(r['disc_with'], 100)} | {ch} | "
+                         f"{fmt_p(r['p']) if testable(r) else '–'} | {pct(r['acc_true_without'])} → "
+                         f"{pct(r['acc_true_with'])} | {pct(r['acc_false_without'])} → {pct(r['acc_false_with'])} |")
+        lines += [""]
+    return lines
 
 
 def robustness_section(rob: dict) -> list[str]:
@@ -1976,7 +2066,7 @@ def baseline_section(c0tab: pd.DataFrame, c0: dict, fam: dict, models) -> list[s
 
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
                    gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=(), h3x=None, judge="",
-                   commit=None) -> str:
+                   commit=None, idisc=None) -> str:
     scope_label = EXPLORATORY if source == "exploratory" else ""
     lines = ["# Results summary", ""]
     if synthetic:
@@ -2131,7 +2221,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
         "scope: share scored 2" + (" (exploratory)" if scope_label else ""): per_model_df["scope_correct_share"].map(pct),
         "parse failures": per_model_df["parse_failed_rate"].map(lambda v: pct(v, 1)),
         "cost USD": per_model_df["cost_usd"].map(lambda v: num(v, 2))})
-    lines += h4_section(fam, list(per_model_df["model"]), caveats)
+    lines += h4_section(fam, list(per_model_df["model"]), caveats, idisc)
     lines += ["## Per model", "",
               "Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs. Each H1 and H2 cell gives "
               "the pre-registered test (C0-ceiling pairs dropped in that model's own scope), then, after the slash, the "

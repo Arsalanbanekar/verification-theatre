@@ -235,6 +235,8 @@ signer (quote the model output verbatim, briefly).
 claims from organisations the model did not recognise?}
 
 **4.7 Countermeasure (H4).** Interpreter vs none on C1/C2: {Δ, CI, p_holm}.
+{INTERPRETER ACCURACY: exploratory, one sentence: did the interpreter improve discrimination on C1/C2,
+or only lower acceptance?}
 
 **4.8 Models.** Per-model table. 120B vs 20B.
 

@@ -37,7 +37,7 @@ with its date, time and reason.
      - Adaption lists seven models. Four are excluded as Qwen/Alibaba or Google (qwen3.5-397b, qwen3.8-27b, gemma-4-26b-a4b-it, gemma-4-31b-it). That leaves glm-5.2 and two "Flash" variants (glm-5.3-flash, deepseek-v4-flash).
      - glm-5.2 is a named production model, not a router or an Adaption stack.
      - JSON output: Adaption has no JSON mode. The unchanged judge prompt asks for JSON, and the parser validates every reply.
-     - Cost: Adaption bills in credits. At the pilot check's mean of 0.0048 credits a call, 600 judgements come to about 2.9 credits. That is above §5's ceiling of about $2 if a credit is worth a dollar. The ceiling was set for paid OpenRouter credit, and this judge is paid from sponsor credits.
+     - Cost: 3.01 sponsor credits for the 600 judgements, above §5's ~$2 guide, which was a budget guide, not a selection criterion. (Reworded on 16 Nov 2026, 00:35 IST, after the judging. The original line, in `3d50f68`, projected about 2.9 credits from the pilot check.)
 
      The settings were committed in `models.yaml` (`e578ba5`) before any judge call: temperature 0; the provider's default reasoning, since Adaption has no reasoning parameter; at most 4,000 output tokens including reasoning; no seed, since Adaption accepts none. The prompt and the blinding are unchanged (`src/judge.py`).
   3. **The cross-check judge is dropped**, by the author's decision. No second judge scores any response.
@@ -55,3 +55,12 @@ with its date, time and reason.
     - `REPORT_DRAFT.md` and `README.md`.
 
   The pilot judge check, the format check §5 requires before main-data judging, ran just before this entry (`e64307a`): 10 of 10 scores were valid. It was preceded by one logged test call on the pilot response the check does not use. No main-data response had been judged when this entry was written.
+- 16 Nov 2026, 00:36 IST: the judge's output cap is raised for one re-ask of 30 judgements, by the author's decision. In the main judging (15 Nov, 18:30–18:47 UTC), 30 of the 600 replies hit `max_output_tokens` (4,000). glm-5.2 spent the whole cap on reasoning and returned no score ("incomplete: max_output_tokens"). The pilot check had not shown this: its longest reply used 3,043 tokens.
+  1. Those 30 responses, and only those, are re-asked once with `max_output_tokens` raised to 12,000 (`judges.main.rejudge` in `models.yaml`, run by `grade.py --rejudge-truncated`). The prompt, model and temperature are unchanged.
+  2. Nothing else is re-judged: the 570 valid judgements stand.
+  3. The new rows are appended to `judge_main.jsonl` with stage `rejudge`. The truncated rows stay on disk, and the analysis uses each response's latest judgement.
+  4. A re-asked response that is cut off again, or fails, is not asked a third time and stays missing. If the re-ask cannot run, the 30 are reported as missing (5%).
+- 16 Nov 2026, 00:36 IST: one exploratory analysis added to `src/analyse.py` after seeing the H4 result, by the author's decision. It asks whether the interpreter improves accuracy or only lowers acceptance across the board.
+  - It compares the discrimination index (acceptance of the true twin minus the false twin) on C1 and C2, with and without the interpreter. This is computed per interpreter-arm model and pooled over them, beside the true and false acceptance it comes from (`interpreter_discrimination.csv`).
+  - It is labelled exploratory wherever it appears (`results_summary.md`, and a new slot in `REPORT_DRAFT.md` §4.7).
+  - It is outside the Holm family, so its p-values are unadjusted. It draws on its own random stream, so no other result changes.

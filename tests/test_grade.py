@@ -304,6 +304,43 @@ def test_agreement_gate(dirs, agree, status):
     assert a["overall"]["n_items"] == 100 and a["overall"]["n_both_scored"] < 100   # N/A takes no part in kappa
 
 
+def cut_off(cost=0.002):
+    """A reply that spent the whole output cap on reasoning: no content, finish_reason "length"."""
+    b = {"id": "gen-2", "model": MAIN_ID, "provider": "TestProvider",
+         "choices": [{"message": {"content": "", "reasoning": "still thinking"}, "finish_reason": "length"}],
+         "usage": {"prompt_tokens": 700, "completion_tokens": 4000, "total_tokens": 4700, "cost": cost}}
+    return HttpResult(200, {}, b, json.dumps(b), 0.2)
+
+
+def test_rejudge_truncated_reasks_each_cut_off_judgement_once(dirs, monkeypatch, capsys):
+    """DEVIATIONS.md, 16 Nov 2026: only judgements cut off at the cap are re-asked, once, with the higher cap and
+    the same prompt; the new row supersedes the old one; nothing is asked a third time."""
+    assert grade(dirs, "--rejudge-truncated") == 1 and "must be above max_output_tokens" in capsys.readouterr().out
+    cfg = judges_config(dirs["tmp"], main={"concurrency": 1, "rejudge": {"max_output_tokens": 12000}}, name="re.yaml")
+    first = FakeJudge(cut_off(), cut_off(), cut_off())                  # the first three in sample order
+    monkeypatch.setattr(openrouter, "send", first)
+    assert grade(dirs, "--judge", "--limit", "10", config=cfg) == 0
+    rows = R.read_raw(dirs["graded"] / "judge_main.jsonl")
+    cut = [j["response_id"] for j in rows if not j["valid"]]
+    assert len(cut) == 3 and G.truncated_ids(R.load_config(cfg), dirs["graded"]) == cut
+    second = FakeJudge(cut_off())                                       # the first re-ask is cut off again
+    monkeypatch.setattr(openrouter, "send", second)
+    assert grade(dirs, "--rejudge-truncated", config=cfg) == 0
+    assert len(second.calls) == 3 and all(p["max_tokens"] == 12000 for p in second.calls)
+    assert [p["messages"] for p in second.calls] == [p["messages"] for p in first.calls[:3]]   # the same prompts
+    rows = R.read_raw(dirs["graded"] / "judge_main.jsonl")
+    again = [j for j in rows if j["stage"] == "rejudge"]
+    assert [j["response_id"] for j in again] == cut and [j["valid"] for j in again] == [False, True, True]
+    assert len(rows) == 13 and sum(j["stage"] == "main" for j in rows) == 10
+    latest = G.judge_rows(dirs["graded"], "main", R.load_config(cfg))
+    assert [latest[c]["valid"] for c in cut] == [False, True, True]     # the analysis uses the latest row
+    third = FakeJudge()
+    monkeypatch.setattr(openrouter, "send", third)
+    capsys.readouterr()
+    assert grade(dirs, "--rejudge-truncated", config=cfg) == 0
+    assert third.calls == [] and "No judgement cut off at max_output_tokens" in capsys.readouterr().out
+
+
 def test_dropped_crosscheck_refuses_and_leaves_the_gate_unevaluable(dirs, capsys):
     """models.yaml marks the cross-check dropped (DEVIATIONS.md, 15 Nov 2026): --crosscheck refuses before any
     call, and with main-judge scores but no cross-check the gate is "unevaluable", never pending or failed."""

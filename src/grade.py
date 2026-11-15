@@ -4,6 +4,7 @@
   python src/grade.py --judge          main judge on the stratified C1-C4 sample of 600 (concurrent, resumable)
   python src/grade.py --crosscheck     free cross-check judge on 100 of those (at most 48 calls a UTC day)
   python src/grade.py --agreement      weighted kappa between the two judges; no API calls
+  python src/grade.py --rejudge-truncated   one re-ask, at a higher cap, of judgements cut off at max_output_tokens
 
 Since 15 Nov 2026 (DEVIATIONS.md) the main judge is glm-5.2 on Adaption and the cross-check judge is
 dropped: --crosscheck refuses, and the agreement gate reports "unevaluable".
@@ -220,6 +221,79 @@ def pilot_judge_check(pilot_dir: Path, model_id) -> str | None:
     return rep.get("judge_verdict") if rep.get("judge_model_id") == model_id else None
 
 
+def judge_items(jcfg: dict, rows: list[dict], ids: list[str]) -> list:
+    """The blind judge prompt's inputs for each response: what the credential certified, the statement and
+    the justification. The same for the first judgement and for a re-ask."""
+    ctx = B.load_context()
+    claims = {c["id"]: c for c in B.load_claims()}
+    by_id = {r["response_id"]: r for r in rows}
+    items = []
+    for rid in ids:
+        r = by_id[rid]
+        claim = claims[r["claim_id"]]
+        items.append(J.Item(rid, J.credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
+                            meta={"seed": R._int_seed(jcfg.get("seed", 0), rid)}))
+    return items
+
+
+TRUNCATED = ("length", "incomplete: max_output_tokens")   # OpenRouter's and Adaption's finish reasons at the cap
+
+
+def truncated_ids(cfg: dict, graded_dir: Path) -> list[str]:
+    """Sample responses, in sample order, whose only judgement by the configured judge model was cut off
+    at max_output_tokens: what --rejudge-truncated re-asks. A response it has re-asked has two rows, so
+    it is never asked a third time (DEVIATIONS.md, 16 Nov 2026)."""
+    mid = J.judge_config(cfg, "main").get("model_id")
+    by: dict[str, list[dict]] = {}
+    for j in R.read_raw(Path(graded_dir) / FILES["main"][0]):
+        if mid and j.get("judge_model_id") == mid:
+            by.setdefault(j["response_id"], []).append(j)
+    path = Path(graded_dir) / "judge_sample.csv"
+    order = [r["response_id"] for r in read_csv(path)] if path.exists() else sorted(by)
+    return [rid for rid in order if len(by.get(rid, [])) == 1 and not by[rid][0].get("valid")
+            and str(by[rid][0].get("finish_reason") or "") in TRUNCATED]
+
+
+def rejudge_truncated(cfg, graded_dir: Path, say=print) -> int:
+    """Re-ask, once, each judgement cut off at max_output_tokens, with judges.main.rejudge's settings (a
+    higher cap). New rows are appended with stage "rejudge"; the analysis uses each response's latest row."""
+    graded_dir = Path(graded_dir)
+    problems = J.config_problems(cfg, "main")
+    if problems:
+        say("The main judge cannot run:")
+        for p in problems:
+            say(f"  - {p}")
+        return 1
+    jcfg = J.judge_config(cfg, "main")
+    over = dict(jcfg.get("rejudge") or {})
+    cap = int(over.get("max_output_tokens") or 0)
+    if cap <= int(jcfg.get("max_output_tokens", 4000)):
+        say("judges.main.rejudge.max_output_tokens in models.yaml must be above max_output_tokens to re-ask "
+            "judgements cut off at the cap.")
+        return 1
+    ids = truncated_ids(cfg, graded_dir)
+    if not ids:
+        say("No judgement cut off at max_output_tokens is waiting for its one re-ask.")
+        return 0
+    R.load_env(REPO / ".env")
+    key_env = PROVIDERS[jcfg["provider"]].KEY_ENV
+    key = os.environ.get(key_env)
+    if not key:
+        say(f"{key_env} is not set. Add it to .env (RUNBOOK.md section 2).")
+        return 1
+    rows = read_csv(graded_dir / "responses.csv")
+    out, attempts = (graded_dir / name for name in FILES["main"])
+    run = J.JudgeRun({**jcfg, **over}, "main", key, out, attempts, stage="rejudge", say=say)
+    say(f"main judge {jcfg['model_id']}: re-asking {len(ids)} judgements cut off at "
+        f"{jcfg.get('max_output_tokens')} tokens, once each, with max_output_tokens {cap}. Ctrl+C stops cleanly.")
+    s = run.run(judge_items(jcfg, rows, ids), reask=True)
+    say(f"re-ask: {s['judged_now']} of {len(ids)} returned ({s['valid_now']} valid); {s['spent_text']} spent on this "
+        "model in all.")
+    if s["stop_reason"]:
+        say(f"Stopped: {s['stop_reason']}. Re-run the same command to re-ask the rest; none is asked twice.")
+    return 0 if s["stop_kind"] in (None, "day") else 1
+
+
 def run_judge(cfg, graded_dir: Path, role: str = "main", limit=None, force=False,
               pilot_dir: Path = DATA / "pilot", say=print) -> int:
     """Judge the role's sample: the main judge's 600, or the cross-check's 100 of them."""
@@ -256,15 +330,7 @@ def run_judge(cfg, graded_dir: Path, role: str = "main", limit=None, force=False
     if not key:
         say(f"{key_env} is not set. Add it to .env (RUNBOOK.md section 2).")
         return 1
-    ctx = B.load_context()
-    claims = {c["id"]: c for c in B.load_claims()}
-    by_id = {r["response_id"]: r for r in rows}
-    items = []
-    for rid in ids:
-        r = by_id[rid]
-        claim = claims[r["claim_id"]]
-        items.append(J.Item(rid, J.credential_facts(ctx, claim, r["condition"]), claim["text"], r["justification"],
-                            meta={"seed": R._int_seed(jcfg.get("seed", 0), rid)}))
+    items = judge_items(jcfg, rows, ids)
     out, attempts = (graded_dir / name for name in FILES[role])
     run = J.JudgeRun(jcfg, role, key, out, attempts, stage=role, say=say)
     already = len(set(ids) & set(J.judged(out, jcfg["model_id"])))
@@ -403,6 +469,9 @@ def main(argv=None) -> int:
                     help="free cross-check judge on 100 of the sample (at most 48 calls a UTC day; resumable); "
                          "dropped on 15 Nov 2026 (DEVIATIONS.md), so it refuses while models.yaml says so")
     ap.add_argument("--agreement", action="store_true", help="weighted kappa between the two judges; no API calls")
+    ap.add_argument("--rejudge-truncated", action="store_true",
+                    help="re-ask, once, each judgement cut off at max_output_tokens, with judges.main.rejudge's "
+                         "higher cap (DEVIATIONS.md, 16 Nov 2026); nothing else is re-judged")
     ap.add_argument("--limit", type=int, help="at most this many responses judged in this run")
     ap.add_argument("--force", action="store_true",
                     help="override a refusal: a failed pilot judge check, or drawing the judge sample before the "
@@ -418,6 +487,8 @@ def main(argv=None) -> int:
         status = run_judge(cfg, a.graded_dir, "main", a.limit, a.force, a.pilot_dir)
     if a.crosscheck and status == 0:
         status = run_judge(cfg, a.graded_dir, "crosscheck", a.limit, a.force, a.pilot_dir)
+    if a.rejudge_truncated and status == 0:
+        status = rejudge_truncated(cfg, a.graded_dir)
     return status
 
 
