@@ -203,7 +203,10 @@ discrimination across conditions; scope accuracy across C1–C4; interpreter vs 
 eight tests, with Holm correction over the eight. H3 is supported only if the upper bound of
 the 95% CI for the share of credential-mentioning justifications scored 2 is below 0.5 and its
 Holm-adjusted p is below .05. Inflation tests exclude pairs at ceiling in C0; the full sample
-is reported alongside. Claim type enters as a factor throughout.
+is reported alongside. Claim type enters as a factor throughout. One rule was added after data
+collection (`DEVIATIONS.md`): a test with fewer than three pairs, or with the same difference in
+every pair, is reported as not testable, without a p-value, and enters the Holm family with
+p = 1; where a pre-registered test is not testable, the full-sample result is the informative one.
 
 ---
 
@@ -248,7 +251,7 @@ Structure (one paragraph each):
 
 ---
 
-## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; required)
+## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft, baseline-ceiling bullet added during the sprint; required)
 
 **What this study establishes.** Within single-turn evaluations of {N} open-weight and small
 proprietary models, how acceptance and confidence in a fixed claim change when a credential is
@@ -260,6 +263,7 @@ attached, and whether models distinguish credentials that license different infe
 - Behaviour on cryptographically signed assets: credentials were presented as crJSON-style
   views, a derived format not intended as input and not independently verifiable.
 - Effects of credential position, wording or format, which were held constant.
+- Whether a credential raises belief in a claim a model doubts without one. {BASELINE CEILING}
 - Invented organisations are detectable by non-recognition (§3.1); the invented half therefore
   measures how credentials interact with unknown sources, not uncheckable facts.
 - Scope accuracy relies on LLM judges, with no human labels. Agreement between two judges from

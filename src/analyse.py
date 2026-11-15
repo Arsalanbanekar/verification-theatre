@@ -14,13 +14,20 @@ rev 3.3). This file implements them:
   permutation p-values over the same differences as a robustness check (exact for <= 16 pairs,
   else 20,000 seeded flips), Holm-adjusted the same way and flagged where they disagree.
 - Holm over the eight tests of the six primary comparisons, within each reporting scope and
-  claim-type set. Inflation tests drop pairs at C0 ceiling in that scope.
+  claim-type set. Inflation tests drop pairs at C0 ceiling in that scope; the full-sample result is
+  reported beside every such stratified result (H1, H2, H1 on false twins, H5).
+- Degeneracy guard (post-data correction, DEVIATIONS.md, 15 Nov 2026): a test with fewer than 3 pairs,
+  or with zero variance in its pair values, is "not testable". It keeps its mean, pair count and the
+  range of its pair values, gets no p-value or CI, and enters Holm with p = 1 (so the family stays at
+  eight). Where a pre-registered test is not testable, the text names the full-sample result as the
+  informative one, with its unadjusted p.
 - H3 is supported only if the upper bound of the 95% CI for the share of credential-mentioning
   justifications scored 2 is below 0.5 and its p_holm < .05. The full 0/1/2 distribution and the
   share mentioning the credential are reported with CIs.
 - Judge results (rev 3.4) are used only if the two judges' linear-weighted kappa on the 100
   cross-checked responses is at least 0.6. Until then, or if it is lower, they are withheld: H3
   is not tested and enters Holm with p = 1, so the family stays at eight.
+- results_summary.md opens with C0 acceptance per model and claim type and the C0-ceiling counts.
 - Descriptive 95% CIs (acceptance by condition, discrimination index, scope shares): t-intervals
   over claims or pairs, clipped to the possible range.
 """
@@ -55,6 +62,10 @@ TYPES = ("real_obscure", "invented")
 TYPE_SETS = {"all": TYPES, "real_obscure": ("real_obscure",), "invented": ("invented",)}
 TYPE_LABEL = {"real_obscure": "real-obscure", "invented": "invented", "all": "all pairs"}
 B_PERM, EXACT_MAX, SEED, ALPHA = 20000, 16, 20261113, 0.05
+# Degeneracy guard (post-data correction, DEVIATIONS.md, 15 Nov 2026): a test over fewer than MIN_PAIRS pairs,
+# or whose pair values are all the same (zero variance), is "not testable". It is reported with its
+# descriptive numbers only, never a p-value or CI, and enters its Holm family with p = 1.
+MIN_PAIRS, SAME = 3, 1e-9
 MINUS = "−"
 NO_VALUE = "NO AUTOMATIC VALUE: fill by hand from the tables below."
 
@@ -182,30 +193,51 @@ def t_ci(x, lo_bound=-np.inf, hi_bound=np.inf) -> tuple[float, float]:
 
 
 def t_test(x, center: float = 0.0) -> tuple[float, float, float, float]:
-    """mean, CI low, CI high, two-sided p for H0: mean == center."""
+    """mean, CI low, CI high, two-sided p for H0: mean == center. No CI and no p from zero variance."""
     x = np.asarray(x, float)
     n, m = len(x), float(np.mean(x)) if len(x) else float("nan")
     if n < 2:
         return m, float("nan"), float("nan"), float("nan")
     se = x.std(ddof=1) / np.sqrt(n)
+    if se <= 1e-12:  # every pair moved by the same amount (up to rounding): degenerate, so no p
+        return m, float("nan"), float("nan"), float("nan")
     lo, hi = t_ci(x)
-    if se <= 1e-12:  # every pair moved by the same amount (up to rounding)
-        return m, lo, hi, (1.0 if abs(m - center) <= 1e-12 else 0.0)
     return m, lo, hi, float(2 * sps.t.sf(abs((m - center) / se), n - 1))
 
 
+def untestable(x) -> str:
+    """'' when a t-test over these pair values can be run; otherwise why not (the degeneracy guard)."""
+    x = np.asarray(x, float)
+    if len(x) == 0:
+        return "no pairs"
+    if len(x) < MIN_PAIRS:
+        return "too few pairs"
+    return "zero variance" if np.ptp(x) <= SAME else ""
+
+
 EMPTY = {"n_pairs": 0, "delta": np.nan, "ci_low": np.nan, "ci_high": np.nan, "p": np.nan,
-         "p_perm": np.nan, "p_perm_min": np.nan, "sd": np.nan}
+         "p_perm": np.nan, "p_perm_min": np.nan, "sd": np.nan, "diff_min": np.nan, "diff_max": np.nan,
+         "not_testable": "no pairs"}
 
 
 def one_sample(x, center: float, rng) -> dict:
+    """The t-test over pairs, or, under the degeneracy guard, only the descriptive numbers: the mean,
+    the number of pairs and the range of the pair values, with no CI and no p-value."""
     x = pd.Series(x, dtype=float).dropna()
     if x.empty:
         return dict(EMPTY)
-    m, lo, hi, p = t_test(x.values, center)
-    return {"n_pairs": len(x), "delta": m, "ci_low": lo, "ci_high": hi, "p": p,
-            "p_perm": signflip_p(x.values, rng, center), "p_perm_min": min_p(len(x)),
-            "sd": float(x.std(ddof=1)) if len(x) > 1 else np.nan}
+    v = x.values
+    out = {**EMPTY, "n_pairs": len(v), "delta": float(v.mean()), "sd": float(x.std(ddof=1)) if len(v) > 1 else np.nan,
+           "diff_min": float(v.min()), "diff_max": float(v.max()), "not_testable": untestable(v)}
+    if out["not_testable"]:
+        return out
+    m, lo, hi, p = t_test(v, center)
+    return {**out, "ci_low": lo, "ci_high": hi, "p": p, "p_perm": signflip_p(v, rng, center), "p_perm_min": min_p(len(v))}
+
+
+def testable(r) -> bool:
+    """A result with a real test behind it (rows from one_sample, or hand-made dicts in tests)."""
+    return bool(r) and (r.get("n_pairs") or 0) >= MIN_PAIRS and not r.get("not_testable")
 
 
 def minus(b: pd.Series, a: pd.Series) -> pd.Series:
@@ -270,10 +302,12 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
     marked = ds[[c for c in MARKED if c in ds]].mean(axis=1) if not ds.empty else pd.Series(dtype=float)
     add("H2b", "C1-C4 mean vs C0", "discrimination index", "pp", paired(col(ds, "C0"), marked, rng), "all pairs",
         primary=False)
-    add("H3", "C1-C4 vs 50%", "share of credential mentions scored 2", "share",
-        one_sample(scope_pairs(df, scope, models, types), 0.5, rng), "all pairs")
+    h3 = one_sample(scope_pairs(df, scope, models, types), 0.5, rng)
+    if scope.empty:
+        h3["not_testable"] = "no scope scores"
+    add("H3", "C1-C4 vs 50%", "share of credential mentions scored 2", "share", h3, "all pairs")
     interp_models = [m for m in models if ((df["model"] == m) & df["interpreter"]).any()]
-    res = dict(EMPTY)
+    res = {**EMPTY, "not_testable": "no interpreter arm"}
     if interp_models:
         none = subset(pair_values(df, interp_models, False, "both"), types)
         withi = subset(pair_values(df, interp_models, True, "both"), types)
@@ -286,8 +320,10 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
     add("H4", "interpreter vs none (C1, C2)", "acceptance", "pp", res, "all pairs")
     prim = [r for r in rows if r["primary"]]
     for key in ("p", "p_perm"):
-        # rev 3.4: an untested H3 (judge results withheld) keeps its place in the family with p = 1
-        untested = [r["hypothesis"] == "H3" and isnan(r[key]) for r in prim]
+        # A test without a p-value keeps its place in the family with p = 1, so the family stays at eight and
+        # no other test is corrected less strictly: an untested H3 (rev 3.4), and any test the degeneracy
+        # guard marks not testable, including one with no pairs left (DEVIATIONS.md, 15 Nov 2026).
+        untested = [isnan(r[key]) for r in prim]
         for r, ph, u in zip(prim, holm([1.0 if u else r[key] for r, u in zip(prim, untested)]), untested):
             r[f"{key}_holm"] = np.nan if u else ph
     for r in rows:
@@ -296,37 +332,59 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
     return rows
 
 
-def h5(df, models, rng) -> dict:
-    """Exploratory: C1 - C0 acceptance on invented pairs minus the same on real-obscure pairs."""
-    w = subset(pair_values(df, models, False, "both"), TYPES, ceiling_pairs(df, models))
+def h5(df, models, rng, ceiling: bool = True) -> dict:
+    """Exploratory: C1 - C0 acceptance on invented pairs minus the same on real-obscure pairs. ceiling=True
+    drops C0-ceiling pairs, as pre-registered; ceiling=False is the full-sample result reported beside it.
+    Degeneracy guard: the Welch test is not testable if either claim type has fewer than MIN_PAIRS pairs or
+    zero variance; the group means and their difference are still reported."""
+    both = pair_values(df, models, False, "both")
+    drop = ceiling_pairs(df, models) if ceiling else set()
+    w = subset(both, TYPES, drop)
     if w.empty or "C1" not in w or "C0" not in w:
         return {}
     d = (w["C1"] - w["C0"]).dropna()
     inv = d[[i[1] == "invented" for i in d.index]].values
     real = d[[i[1] == "real_obscure" for i in d.index]].values
-    if len(inv) == 0 or len(real) == 0:
-        return {}
-    obs = float(inv.mean() - real.mean())
-    va = inv.var(ddof=1) / len(inv) if len(inv) > 1 else np.nan
-    vb = real.var(ddof=1) / len(real) if len(real) > 1 else np.nan
+    out = {"sample": "C0-ceiling pairs dropped" if ceiling else "all pairs", "n_invented": len(inv), "n_real": len(real)}
+    for key, x, t in (("invented", inv, "invented"), ("real", real, "real_obscure")):
+        g = one_sample(x, 0.0, rng)
+        out.update({f"{key}_{k}": g[k] for k in ("delta", "ci_low", "ci_high", "p", "p_perm", "not_testable",
+                                                 "diff_min", "diff_max")})
+        out[f"{key}_n_ceiling_dropped"] = sum(1 for i in both.index if i[1] == t and i[0] in drop)
+    out.update({"difference": float(inv.mean() - real.mean()) if len(inv) and len(real) else np.nan,
+                "ci_low": np.nan, "ci_high": np.nan, "p": np.nan, "p_perm": np.nan, "not_testable": ""})
+    why = [f"{TYPE_LABEL[t]}: {u}" for t, u in (("invented", untestable(inv)), ("real_obscure", untestable(real))) if u]
+    if why:
+        out["not_testable"] = "; ".join(why)
+        return out
+    obs = out["difference"]
+    va, vb = inv.var(ddof=1) / len(inv), real.var(ddof=1) / len(real)   # both > 0 under the guard
     se = np.sqrt(va + vb)
-    if se > 0:  # Welch
-        dof = (va + vb) ** 2 / ((va ** 2 / (len(inv) - 1) if va else 0) + (vb ** 2 / (len(real) - 1) if vb else 0))
-        half, p = sps.t.ppf(0.975, dof) * se, float(2 * sps.t.sf(abs(obs) / se, dof))
-    else:
-        half, p = (0.0, 1.0 if obs == 0 else 0.0) if se == 0 else (np.nan, np.nan)
+    dof = (va + vb) ** 2 / (va ** 2 / (len(inv) - 1) + vb ** 2 / (len(real) - 1))   # Welch
+    half, p = sps.t.ppf(0.975, dof) * se, float(2 * sps.t.sf(abs(obs) / se, dof))
     pooled, n_perm = np.concatenate([inv, real]), B_PERM // 4
     perm = np.empty(n_perm)
     for k in range(n_perm):
         s = rng.permutation(pooled)
         perm[k] = s[:len(inv)].mean() - s[len(inv):].mean()
-    i, r = one_sample(inv, 0.0, rng), one_sample(real, 0.0, rng)
-    return {"n_invented": len(inv), "n_real": len(real),
-            "invented_delta": i["delta"], "invented_ci_low": i["ci_low"], "invented_ci_high": i["ci_high"],
-            "invented_p": i["p"], "invented_p_perm": i["p_perm"],
-            "real_delta": r["delta"], "real_ci_low": r["ci_low"], "real_ci_high": r["ci_high"], "real_p": r["p"],
-            "difference": obs, "ci_low": obs - half, "ci_high": obs + half, "p": p,
+    return {**out, "ci_low": obs - half, "ci_high": obs + half, "p": p,
             "p_perm": float((np.sum(np.abs(perm) >= abs(obs) - 1e-12) + 1) / (n_perm + 1))}
+
+
+def h5_group(h: dict, t: str) -> dict:
+    """One claim type's C1 - C0 inside an H5 result, as a row that stat() and why_not() can read."""
+    if not h:
+        return {}
+    k = "invented" if t == "invented" else "real"
+    return {"unit": "pp", "n_pairs": h[f"n_{k}"], "n_ceiling_dropped": h[f"{k}_n_ceiling_dropped"],
+            **{x: h[f"{k}_{x}"] for x in ("delta", "ci_low", "ci_high", "p", "not_testable", "diff_min", "diff_max")}}
+
+
+def h5_why(h: dict) -> str:
+    """Why an H5 comparison is not testable: the claim types whose C1 - C0 has too few pairs or zero variance."""
+    parts = [f"on {TYPE_LABEL[t]} pairs {why_not(g)}" for t in ("invented", "real_obscure")
+             for g in [h5_group(h, t)] if g.get("not_testable")]
+    return " and ".join(parts) or "there were no pairs"
 
 
 # ---------------------------------------------------------------- descriptive tables
@@ -351,6 +409,33 @@ def acceptance_table(df) -> pd.DataFrame:
             out.append(dict(zip(keys, k), model="pooled", interpreter=False, n_responses=int(n_main[k]),
                             n_claims=len(s), acceptance=float(s.mean()), ci_low=lo, ci_high=hi))
     return pd.DataFrame(out, columns=cols)
+
+
+def c0_table(df, models) -> pd.DataFrame:
+    """C0 acceptance per model (and pooled, models weighted equally) by claim type and truth: a claim's value is
+    its mean over parsed reps, a cell the mean over its claims. Also the pairs at the C0 ceiling in each scope,
+    the set the pre-registered inflation tests drop (§7)."""
+    d = df[(df["condition"] == "C0") & ~df["interpreter"] & df["model"].isin(models)].dropna(subset=["accepted"])
+    if d.empty:
+        return pd.DataFrame()
+    claim = d.groupby(["model", "claim_type", "truth_value", "claim_id"])["accepted"].mean()
+    out = []
+    for scope_name, ms in [(m, [m]) for m in models] + [("pooled", list(models))]:
+        c = claim[claim.index.get_level_values("model").isin(ms)]
+        if c.empty:
+            continue
+        per = c.groupby(["claim_type", "truth_value", "claim_id"]).mean()
+        row = {"scope": scope_name, "n_responses": int(d["model"].isin(ms).sum()), "all": float(per.mean())}
+        for t in TYPES:
+            for v in (True, False):
+                x = per[(per.index.get_level_values("claim_type") == t) & (per.index.get_level_values("truth_value") == v)]
+                row[f"{t}_{'true' if v else 'false'}"] = float(x.mean()) if len(x) else np.nan
+        ceil, sub = ceiling_pairs(df, ms), d[d["model"].isin(ms)]
+        for t in TYPES:
+            pairs = set(sub.loc[sub["claim_type"] == t, "pair_id"])
+            row[f"{t}_pairs"], row[f"{t}_ceiling"] = len(pairs), len(pairs & ceil)
+        out.append(row)
+    return pd.DataFrame(out)
 
 
 def discrimination_table(df, models) -> pd.DataFrame:
@@ -467,8 +552,10 @@ def scope_distribution_table(df, scope, models) -> pd.DataFrame:
 def h3_verdict(h3: dict) -> tuple[bool, str]:
     """The rev 3.3 rule: supported only if the 95% CI's upper bound for the share scored 2 is below
     0.5 and the Holm-adjusted p is below .05."""
-    if not h3 or not h3.get("n_pairs") or isnan(h3.get("ci_high")):
+    if not h3 or not h3.get("n_pairs"):
         return False, "H3 could not be evaluated (no scope scores)."
+    if not testable(h3) or isnan(h3.get("ci_high")):
+        return False, f"H3 could not be tested, because {why_not(h3)}, so it is not supported."
     hi = pct(min(1.0, h3["ci_high"]))
     if h3["ci_high"] < 0.5 and not isnan(h3.get("p_holm")) and h3["p_holm"] < ALPHA:
         return True, (f"The upper bound of the CI for score 2 ({hi}) is below 50% and "
@@ -710,15 +797,81 @@ def p_part(r, adjusted=True) -> str:
     return p_is("p_holm", r.get("p_holm")) if adjusted else p_is("p", r.get("p")) + ", unadjusted"
 
 
+def pairs_txt(r) -> str:
+    """'7 pairs, 3 dropped at the C0 ceiling': each test's pair count, beside it."""
+    n, d = r.get("n_pairs") or 0, r.get("n_ceiling_dropped") or 0
+    return f"{n} pair{'s' if n != 1 else ''}" + (f", {d} dropped at the C0 ceiling" if d else "")
+
+
 def inner(r, adjusted=True) -> str:
-    return f"95% CI {value(r, 'ci_low')} to {value(r, 'ci_high')}; {p_part(r, adjusted)}; {r['n_pairs']} pairs"
+    return f"95% CI {value(r, 'ci_low')} to {value(r, 'ci_high')}; {p_part(r, adjusted)}; {pairs_txt(r)}"
+
+
+REASONS = {"no pairs": "there were no pairs", "no scope scores": "there were no scope scores",
+           "no interpreter arm": "this scope has no interpreter arm"}
+
+
+def why_not(r: dict) -> str:
+    """Why a result is not testable (the degeneracy guard), as a clause with its descriptive numbers. It has no
+    parentheses, so it can sit inside a parenthesis."""
+    n, d = r.get("n_pairs") or 0, r.get("n_ceiling_dropped") or 0
+    u, what = UNIT[r.get("unit", "pp")], "share" if r.get("unit") == "share" else "difference"
+    if n == 0:
+        return f"all {d} pairs were at the C0 ceiling" if d else REASONS.get(r.get("not_testable"), "there were no pairs")
+    if n >= MIN_PAIRS:
+        return f"all {n} pairs had the same {what}, {value(r)}{u}"
+    left = f"only {n} pair{'s' if n != 1 else ''} {'were' if n != 1 else 'was'} left"
+    left += f" after {d} at the C0 ceiling were dropped" if d else ""
+    if n == 1:
+        return f"{left}, with a {what} of {value(r)}{u}"
+    if abs(r["diff_max"] - r["diff_min"]) <= SAME:
+        return f"{left}, both with a {what} of {value(r)}{u}"
+    return f"{left}, with {what}s of {value(r, 'diff_min')} and {value(r, 'diff_max')}{u}"
+
+
+def why_short(r: dict) -> str:
+    """why_not for a table cell."""
+    n, d = r.get("n_pairs") or 0, r.get("n_ceiling_dropped") or 0
+    if n == 0:
+        return f"all {d} pairs at the C0 ceiling" if d else (r.get("not_testable") or "no pairs")
+    if n >= MIN_PAIRS:
+        return f"zero variance: all {n} pairs {value(r)}"
+    same = n == 2 and abs(r["diff_max"] - r["diff_min"]) <= SAME
+    return (f"{n} pair{'s' if n != 1 else ''}" + (f" after {d} at the C0 ceiling" if d else "")
+            + (", same difference" if same else ""))
 
 
 def stat(r: dict, adjusted=True) -> str:
-    """+29.8 points (95% CI +22.7 to +37.1; p_holm = 0.016; 10 pairs)"""
-    if not r or not r.get("n_pairs"):
+    """+29.8 points (95% CI +22.7 to +37.1; p_holm = 0.016; 10 pairs), or why it is not testable."""
+    if not r:
         return "not available (no data for this comparison)"
+    if not testable(r):
+        return f"not testable, because {why_not(r)}"
     return f"{value(r)}{UNIT[r.get('unit', 'pp')]} ({inner(r, adjusted)})"
+
+
+def informative(r: dict, f: dict) -> tuple[dict, bool]:
+    """The result to read: the pre-registered test when it is testable, otherwise the full-sample result reported
+    beside it (§7); the flag is True for the full sample."""
+    return (r, False) if (testable(r) or not f) else (f, True)
+
+
+def moved(r: dict, full: bool = False) -> bool:
+    """A reliable difference: p_holm < .05 for a test in the Holm family. A full-sample result is outside the
+    family, so its unadjusted p < .05 is used, and the text always labels that p unadjusted."""
+    p = r.get("p") if full else r.get("p_holm")
+    return testable(r) and not isnan(p) and p < ALPHA
+
+
+def with_full(r: dict, f: dict, adjusted=True) -> str:
+    """A stratified (C0-ceiling) result with the full-sample result beside it, as §7 requires. When the stratified
+    test is not testable, the full-sample result is named as the informative one."""
+    if not f:
+        return stat(r, adjusted)
+    if testable(r):
+        return f"{stat(r, adjusted)}; full sample: {stat(f, adjusted=False)}"
+    return (f"not testable with the C0-ceiling rule, because {why_not(r)}; full sample, the informative result: "
+            f"{stat(f, adjusted=False)}")
 
 
 def by(r, adjusted=True, short=False) -> str:
@@ -726,7 +879,7 @@ def by(r, adjusted=True, short=False) -> str:
     unit = r.get("unit", "pp")
     sc = SCALE[unit]
     lo, hi = (r["ci_low"], r["ci_high"]) if r["delta"] >= 0 else (-r["ci_high"], -r["ci_low"])
-    tail = f", {p_part(r, adjusted)}" if short else f"; {p_part(r, adjusted)}; {r['n_pairs']} pairs"
+    tail = f", {p_part(r, adjusted)}" if short else f"; {p_part(r, adjusted)}; {pairs_txt(r)}"
     return f"by {plain(abs(r['delta']), sc)}{UNIT[unit]} (95% CI {plain(lo, sc)} to {plain(hi, sc)}{tail})"
 
 
@@ -748,81 +901,178 @@ def find(rows, h, comparison, measure="acceptance", primary=True) -> dict:
 
 def ci_bound(r) -> str:
     """The largest difference, in points, that the 95% CI leaves open."""
-    if not r or not r.get("n_pairs") or isnan(r.get("ci_low")):
+    if not testable(r) or isnan(r.get("ci_low")):
         return "n/a"
     return f"{max(abs(r['ci_low']), abs(r['ci_high'])) * SCALE[r.get('unit', 'pp')]:.0f}"
 
 
+def h1_verdict(r: dict, full: bool) -> str:
+    """H1 in one sentence, with the direction stated as it is. The hypothesis itself is never reworded."""
+    if not testable(r):
+        return "H1 could not be tested: neither the pre-registered test nor the full sample was testable."
+    if moved(r, full) and r["delta"] < 0:
+        return ("H1 is not supported: " + ("in the full sample " if full else "")
+                + "the credential lowered acceptance, the opposite of the predicted direction.")
+    if moved(r, full):
+        return ("H1 could not be tested as pre-registered; the full-sample result is in the predicted direction."
+                if full else "H1 is supported: the credential raised acceptance.")
+    return ("H1 is not supported: the pre-registered test was not testable, and the full sample shows no reliable "
+            "difference." if full else "H1 is not supported: acceptance did not reliably change.")
+
+
+ALMOST_ALL = 0.90   # wording only: "almost all claims" when every pooled C0 cell (claim type x truth) is at least this
+
+
+def baseline_note(c0: dict) -> str:
+    """One sentence on pooled C0 acceptance, from the four claim-type x truth cells."""
+    keys = ("real_true", "real_false", "inv_true", "inv_false")
+    if not all(c0.get(k) for k in keys):
+        return ""
+    v = {k: c0[k][0] for k in keys}
+    lead = ("At baseline the models accepted almost all claims, true and false alike" if min(v.values()) >= ALMOST_ALL
+            else "At baseline the models accepted "
+            f"{pct((v['real_true'] + v['inv_true']) / 2)} of true and {pct((v['real_false'] + v['inv_false']) / 2)} "
+            "of false claims")
+    return (f"{lead}: pooled over models, {pct(v['real_true'])} of true and {pct(v['real_false'])} of false "
+            f"real-obscure claims, {pct(v['inv_true'])} and {pct(v['inv_false'])} invented.")
+
+
+def and_list(xs) -> str:
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
+def per_model_c0(c0_models: dict) -> str:
+    """'gpt-oss-120b and gpt-oss-20b accepted every C0 response; qwen3.8-27b 90%'"""
+    every = [m for m, v in c0_models.items() if v >= 1 - 1e-12]
+    rest = [f"{m} {pct(v)}" for m, v in c0_models.items() if v < 1 - 1e-12]
+    return "; ".join(([f"{and_list(every)} accepted every C0 response"] if every else []) + rest)
+
+
+def baseline_ceiling_text(ctx: dict, infl: list[dict]) -> str:
+    """The baseline-ceiling limitation (Appendix A), from the data."""
+    c0, note = ctx["c0"], baseline_note(ctx["c0"])
+    if not note:
+        return "C0 data were not available."
+    h1 = infl[0]
+    total = (h1.get("n_pairs") or 0) + (h1.get("n_ceiling_dropped") or 0)
+    d = h1.get("n_ceiling_dropped") or 0
+    text = note.replace("At baseline the models", "Without a credential, the models", 1)[:-1]
+    text += f"; {per_model_c0(ctx['c0_models'])}." if ctx.get("c0_models") else "."
+    if not d:
+        return text + (" No real-obscure pair was at the C0 ceiling in the pooled analysis, so the ceiling did not "
+                       "limit the inflation tests [delete this bullet].")
+    text += (f" In the pooled analysis {d} of {total} real-obscure pairs were at the C0 ceiling, with both versions "
+             "accepted in every C0 response; on such pairs a credential can only leave acceptance unchanged or lower it.")
+    out = [r for r in infl if not testable(r)]
+    if not out:
+        return text + f" The pre-registered inflation tests drop those pairs and were run on the remaining {h1['n_pairs']}."
+    hyps = sorted({r["hypothesis"] for r in out})
+    which = (" and ".join(hyps) + " tests" if len(out) == len(infl) else
+             "; ".join(label_of(r) for r in out))
+    return text + (f" The pre-registered inflation tests drop those pairs, which left the {which} on real-obscure pairs "
+                   "not testable; the full-sample results reported beside them are the informative ones.")
+
+
 def build_slots(ctx: dict) -> dict:
     """Ready-to-paste text for each slot. Verbs follow the data: a change is reported as a change only
-    when p_holm < .05 (p < .05 for the exploratory H5); otherwise the text says what the CI leaves open."""
+    when p_holm < .05 (p < .05 for the exploratory H5); otherwise the text says what the CI leaves open.
+    Degeneracy guard (DEVIATIONS.md, 15 Nov 2026): a pre-registered test that is not testable is reported as such,
+    and the full-sample result beside it (§7) is named as the informative one, with its unadjusted p."""
     real, allp = ctx["fam"][("pooled", "real_obscure")], ctx["fam"][("pooled", "all")]
-    h1, h1f = find(real, "H1", "C1 vs C0"), ctx["h1_false"]
+    h1, h1f, h1f_full = find(real, "H1", "C1 vs C0"), ctx["h1_false"], ctx["h1_false_full"]
     c32, c32c = find(real, "H2", "C3 vs C2"), find(real, "H2", "C3 vs C2", "confidence")
     c41, c43 = find(real, "H2", "C4 vs C1"), find(real, "H2", "C4 vs C3")
+    full = {k: find(real, *k, primary=False) for k in (("H1", "C1 vs C0"), ("H2", "C3 vs C2"), ("H2", "C4 vs C1"),
+                                                         ("H2", "C4 vs C3"), ("H2", "C3 vs C2", "confidence"))}
     d50 = find(real, "H2b", "C5 vs C0", "discrimination index")
     dflat = find(real, "H2b", "C1-C4 mean vs C0", "discrimination index", primary=False)
     h3 = find(real, "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
     h4 = find(allp, "H4", "interpreter vs none (C1, C2)")
-    h5r, disc = ctx["h5"], ctx["disc_real"]
+    h5r, h5f, disc = ctx["h5"], ctx["h5_full"], ctx["disc_real"]
     words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
     s = {"N_MODELS": words.get(len(ctx["models"]), str(len(ctx["models"])))}
     s["N_STUDY_MODELS"] = s["N_MODELS"]
-    h1_up = sig(h1) and h1["delta"] > 0
+    h1_up = sig(h1) and h1["delta"] > 0   # composite claims (RESULT_PHRASE, DISC_ABSTRACT) need the pre-registered test
 
     # H1 (abstract headline and 4.2)
-    if h1.get("n_pairs"):
-        false_note = (f"; false versions alone: {plain(abs(h1f['delta']))} points"
-                      if h1f.get("n_pairs") and sig(h1) and np.sign(h1f["delta"]) == np.sign(h1["delta"]) else "")
-        if sig(h1):
-            b = by(h1, short=True)
-            h1_core = f"{'raised' if h1['delta'] > 0 else 'lowered'} acceptance {b[:-1]}{false_note})"
+    r1, full1 = informative(h1, full[("H1", "C1 vs C0")])
+    rf = h1f_full if full1 else h1f
+    if testable(r1):
+        adj = not full1
+        false_note = (f"; false versions alone: {plain(abs(rf['delta']))} points"
+                      if moved(r1, full1) and testable(rf) and np.sign(rf["delta"]) == np.sign(r1["delta"]) else "")
+        if moved(r1, full1):
+            b = by(r1, adjusted=adj, short=True)
+            h1_core = (f"{'raised' if r1['delta'] > 0 else 'lowered'} acceptance {b[:-1]}{false_note})"
+                       + ("" if r1["delta"] > 0 else ", the opposite of the predicted inflation"))
         else:
-            h1_core = f"did not reliably change acceptance {unchanged(h1)}"
-        lead = f"On claims about real organisations, a credential that certified nothing about the claim {h1_core}"
+            h1_core = f"did not reliably change acceptance {unchanged(r1, adjusted=adj)}"
+        lead = ("On claims about real organisations, " + (
+            f"the pre-registered test of credence inflation was not testable, because {why_not(h1)}; in the full "
+            "sample, " if full1 else "") + f"a credential that certified nothing about the claim {h1_core}")
+    elif h1:
+        lead = f"On claims about real organisations, credence inflation could not be tested, because {why_not(h1)}"
     else:
         lead = "C1 vs C0 was not available"
-    s["H1_STAT"] = (f"{signed(h1f.get('delta'))} points on real-obscure false claims (95% CI {signed(h1f.get('ci_low'))} "
-                    f"to {signed(h1f.get('ci_high'))}; {p_is('p', h1f.get('p'))}, unadjusted; {h1f.get('n_pairs', 0)} "
-                    f"pairs). Pre-registered test, both twins: {stat(h1)}")
+    s["H1_STAT"] = (f"real-obscure pairs, {with_full(h1f, h1f_full, adjusted=False)}. Both twins, the "
+                    f"pre-registered test: {with_full(h1, full[('H1', 'C1 vs C0')])}. {h1_verdict(r1, full1)}")
 
     # H2 (4.3 and the abstract)
-    s["C32_STAT"] = f"C3 − C2 = {stat(c32)}; confidence, C3 − C2 = {stat(c32c)}"
-    s["C41_STAT"] = f"C4 − C1 = {stat(c41)}. C4 vs C3: C4 − C3 = {stat(c43)}"
-    names = ((c32, "moving the statement from gathered to created assertions (C3 vs C2)"),
-             (c41, "removing the signer from the trust list (C4 vs C1)"), (c43, "C4 vs C3"))
-    moved = [(r, n) for r, n in names if sig(r)]
-    if not any(r.get("n_pairs") for r, _ in names):
-        s["H2_SENTENCE"] = "C2–C4 comparisons were not available."
-    elif not moved:
-        s["H2_SENTENCE"] = ("No reliable difference: acceptance did not reliably differ whether the signer asserted the "
-                            f"statement (C3) or merely recorded it (C2), with the 95% CI excluding differences larger "
-                            f"than {ci_bound(c32)} points, nor whether the signer was on a trust list (C4 vs C1; larger "
-                            f"than {ci_bound(c41)} points).")
+    def eq(label, r, f):
+        return f"{label} {'=' if testable(r) else 'is'} {with_full(r, f)}"
+    s["C32_STAT"] = (f"{eq('C3 − C2', c32, full[('H2', 'C3 vs C2')])}; confidence, "
+                     f"{eq('C3 − C2', c32c, full[('H2', 'C3 vs C2', 'confidence')])}")
+    s["C41_STAT"] = f"{eq('C4 − C1', c41, full[('H2', 'C4 vs C1')])}. C4 vs C3: {eq('C4 − C3', c43, full[('H2', 'C4 vs C3')])}"
+    names = [(informative(c32, full[("H2", "C3 vs C2")]),
+              "moving the statement from gathered to created assertions (C3 vs C2)"),
+             (informative(c41, full[("H2", "C4 vs C1")]), "removing the signer from the trust list (C4 vs C1)"),
+             (informative(c43, full[("H2", "C4 vs C3")]), "C4 vs C3")]
+    went = [(r, f, n) for (r, f), n in names if moved(r, f)]
+    fulls = [f for (r, f), _ in names if testable(r)]
+    pre = ("" if not any(fulls) else
+           f"With the C0-ceiling rule {'these tests were' if all(fulls) else 'some of these tests were'} not testable, "
+           "so the full-sample results are given instead, with unadjusted p-values. ")
+    if not any(testable(r) for (r, _), _ in names):
+        s["H2_SENTENCE"] = ("C2–C4 comparisons were not testable, because " + why_not(c32) + "."
+                            if c32 else "C2–C4 comparisons were not available.")
+    elif not went:
+        (r32, _), (r41, _) = names[0][0], names[1][0]
+        s["H2_SENTENCE"] = pre + ("No reliable difference: acceptance did not reliably differ whether the signer asserted "
+                                  f"the statement (C3) or merely recorded it (C2), with the 95% CI excluding differences "
+                                  f"larger than {ci_bound(r32)} points, nor whether the signer was on a trust list "
+                                  f"(C4 vs C1; larger than {ci_bound(r41)} points).")
     else:
-        s["H2_SENTENCE"] = ("Partly: " + "; ".join(f"{n} {'raised' if r['delta'] > 0 else 'lowered'} acceptance {by(r)}"
-                                                   for r, n in moved)
-                            + ("; the other contrasts did not reliably differ." if len(moved) < 3 else "."))
-    if c32.get("n_pairs"):
+        s["H2_SENTENCE"] = pre + ("Partly: " + "; ".join(
+            f"{n} {'raised' if r['delta'] > 0 else 'lowered'} acceptance {by(r, adjusted=not f)}" for r, f, n in went)
+            + ("; the other contrasts did not reliably differ." if len(went) < 3 else "."))
+    r32, full32 = names[0][0]
+    if testable(r32):
+        tag = ", full sample" if full32 and not full1 else ""
         c32_phrase = (f"acceptance did not reliably differ between a signer who asserted the statement and one who "
-                      f"merely recorded it (C3 − C2 = {value(c32)} points, 95% CI {value(c32, 'ci_low')} to "
-                      f"{value(c32, 'ci_high')})" if not sig(c32) else
-                      f"acceptance was {'higher' if c32['delta'] > 0 else 'lower'} {by(c32, short=True)} when the "
-                      f"signer asserted the statement than when it merely recorded it")
+                      f"merely recorded it (C3 − C2 = {value(r32)} points, 95% CI {value(r32, 'ci_low')} to "
+                      f"{value(r32, 'ci_high')}{tag})" if not moved(r32, full32) else
+                      f"acceptance was {'higher' if r32['delta'] > 0 else 'lower'} "
+                      f"{by(r32, adjusted=not full32, short=True)} when the signer asserted the statement than when it "
+                      f"merely recorded it")
         s["HEADLINE"] = f"{lead}, and {c32_phrase}."
     else:
         s["HEADLINE"] = lead + "."
 
     # H2b (4.4 and the abstract)
-    flat = bool(dflat.get("n_pairs")) and not (dflat.get("p", 1.0) < ALPHA)
+    flat = testable(dflat) and not (dflat["p"] < ALPHA)
     rose = sig(d50) and d50["delta"] > 0
     if d50.get("n_pairs"):
-        c5 = (f"rose {by(d50)}" if rose else f"{'fell' if sig(d50) else 'did not reliably rise'} "
-              f"{by(d50) if sig(d50) else unchanged(d50)}")
+        if testable(d50):
+            c5 = (f"rose {by(d50)}" if rose else f"{'fell' if sig(d50) else 'did not reliably rise'} "
+                  f"{by(d50) if sig(d50) else unchanged(d50)}")
+        else:
+            c5 = f"was not testable, because {why_not(d50)}"
+        mid = (f"{'did not reliably move' if flat else 'moved'} (Δ = {value(dflat)} points vs C0; "
+               f"{inner(dflat, adjusted=False)})" if testable(dflat) else
+               f"could not be tested against C0, because {why_not(dflat)}")
         s["DISCRIMINATION"] = (
             f"On real-obscure pairs the discrimination index was {signed(disc.get('C0'))} points at C0. Averaged over "
-            f"C1–C4 it {'did not reliably move' if flat else 'moved'} (Δ = {value(dflat)} points vs C0; "
-            f"{inner(dflat, adjusted=False)}), and at C5 it {c5}.")
+            f"C1–C4 it {mid}, and at C5 it {c5}.")
         if h1_up and flat:
             s["DISC_ABSTRACT"] = ("These credentials raised acceptance of true and false versions alike, leaving the "
                                   "ability to tell them apart unchanged; " +
@@ -854,7 +1104,10 @@ def build_slots(ctx: dict) -> dict:
     s["CITATION_TABLE"] = ctx["citation_md"]
 
     # H4 (abstract and 4.7)
-    if h4.get("n_pairs"):
+    if h4.get("n_pairs") and not testable(h4):
+        s["H4_SENTENCE"] = f"The interpreter arm could not be tested, because {why_not(h4)}."
+        s["H4_STAT"] = f"interpreter − none is {stat(h4)}"
+    elif h4.get("n_pairs"):
         gap = h4.get("gap_without_interpreter", np.nan)
         reduced = sig(h4) and h4["delta"] < 0
         closed = ""
@@ -872,23 +1125,32 @@ def build_slots(ctx: dict) -> dict:
     else:
         s["H4_SENTENCE"] = s["H4_STAT"] = "The interpreter arm was not available."
 
-    # H5 (exploratory: abstract and 4.6)
-    if h5r:
-        d, pi = h5r["invented_delta"], h5r["invented_p"]
+    # H5 (exploratory: abstract and 4.6). Read from the C0-ceiling version, as pre-registered, when it is testable,
+    # else from the full-sample version reported beside it.
+    r5, full5 = ((h5r, False) if h5r and not h5r["not_testable"] else (h5f, True) if h5f else (h5r, False))
+    if h5r or h5f:
+        s["H5_DELTA"] = with_full(h5_group(h5r, "invented"), h5_group(h5f, "invented"), adjusted=False) + "; H5 is exploratory"
+    if r5 and not r5["not_testable"]:
+        d, pi = r5["invented_delta"], r5["invented_p"]
         moved5 = not isnan(pi) and pi < ALPHA
-        change = (f"{'raised' if d > 0 else 'lowered'} acceptance by {plain(abs(d))} points" if moved5
-                  else f"changed acceptance by {signed(d)} points")
-        compare = (f"against {signed(h5r['real_delta'])} points for claims about real organisations (difference "
-                   f"{signed(h5r['difference'])} points; 95% CI {signed(h5r['ci_low'])} to {signed(h5r['ci_high'])}; "
-                   f"{p_is('p', h5r['p'])}, exploratory)")
-        s["H5_DELTA"] = (f"{signed(d)} points (95% CI {signed(h5r['invented_ci_low'])} to "
-                         f"{signed(h5r['invented_ci_high'])}; {p_is('p', pi)}, unadjusted, exploratory; "
-                         f"{h5r['n_invented']} pairs)")
+        where = " in the full sample" if full5 else ""
+        change = (f"{'raised' if d > 0 else 'lowered'} acceptance by {plain(abs(d))} points{where}" if moved5
+                  else f"changed acceptance by {signed(d)} points{where}")
+        compare = (f"against {signed(r5['real_delta'])} points for claims about real organisations (difference "
+                   f"{signed(r5['difference'])} points; 95% CI {signed(r5['ci_low'])} to {signed(r5['ci_high'])}; "
+                   f"{p_is('p', r5['p'])}, exploratory{', full sample' if full5 else ''})")
+        if full5 and h5r:
+            compare += f"; with the C0-ceiling rule the comparison was not testable, because {h5_why(h5r)}"
         s["H5_ABSTRACT"] = f"For organisations the models did not recognise, the same credential {change}, {compare}."
-        more = h5r["difference"] > 0 and h5r["p"] < ALPHA
-        answer = "Yes" if (moved5 and d > 0 and more) else "Partly" if (moved5 and d > 0) else "No clear evidence"
+        more = r5["difference"] > 0 and r5["p"] < ALPHA
+        answer = ("Yes" if (moved5 and d > 0 and more) else "Partly" if (moved5 and d > 0) else "No" if moved5
+                  else "No clear evidence")
         s["H5_46"] = (f"{answer}: on claims about organisations the models did not recognise, the credential {change}, "
                       f"{compare}.")
+    elif r5:
+        s["H5_ABSTRACT"] = s["H5_46"] = (
+            f"The comparison between claims about unrecognised and recognised organisations could not be tested, "
+            f"because {h5_why(r5)}.")
     else:
         s["H5_DELTA"] = s["H5_ABSTRACT"] = s["H5_46"] = "H5 was not available."
 
@@ -908,6 +1170,7 @@ def build_slots(ctx: dict) -> dict:
                              else "."))
     else:
         s["C0_SENTENCE"] = "C0 data were not available."
+    s["BASELINE_CEILING"] = baseline_ceiling_text(ctx, [h1, c32, c32c, c41, c43])   # Appendix A
 
     for k in ("SETTINGS", "MODELS_PARAGRAPH", "JUDGE_MODEL", "N_JUDGED", "KAPPA"):
         s[k] = ctx[k.lower()]
@@ -944,6 +1207,7 @@ SLOT_RULES = [
     (r"TABLE$", r"Credential-citation rate $", "CITATION_TABLE"),
     (r"Δ$", r"invented items: $", "H5_DELTA"),
     (r"DID A CREDENTIAL RESCUE\b", None, "H5_46"),
+    (r"BASELINE CEILING\b", None, "BASELINE_CEILING"),
 ]
 
 
@@ -1083,16 +1347,25 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
             fam[(scope_name, ctype)] = rows
             all_rows += rows
     lead = ["model_scope", "claim_type", "hypothesis", "comparison", "measure", "unit", "sample", "primary",
-            "n_pairs", "delta", "ci_low", "ci_high", "p", "p_holm", "p_perm", "p_perm_holm", "p_perm_min", "sd",
-            "n_ceiling_dropped"]
+            "n_pairs", "n_ceiling_dropped", "not_testable", "delta", "ci_low", "ci_high", "p", "p_holm", "p_perm",
+            "p_perm_holm", "p_perm_min", "sd", "diff_min", "diff_max"]
     tests = pd.DataFrame(all_rows)
     tests = tests[lead + [c for c in tests.columns if c not in lead]]
     tests.to_csv(out / "primary_tests.csv", index=False)
 
-    wf = subset(pair_values(df, models, False, False), ("real_obscure",), ceiling_pairs(df, models))
-    h1_false = paired(col(wf, "C0"), col(wf, "C1"), rng)
+    # H1 on false twins alone and H5: with the C0-ceiling rule, and the full-sample result beside each (§7)
+    ceil, false_only = ceiling_pairs(df, models), pair_values(df, models, False, False)
+    wf, wf_full = subset(false_only, ("real_obscure",), ceil), subset(false_only, ("real_obscure",))
+    h1_false = {**paired(col(wf, "C0"), col(wf, "C1"), rng), "unit": "pp",
+                "n_ceiling_dropped": len(ceil & {i[0] for i in wf_full.index})}
     h5r = h5(df, models, rng)
-    pd.DataFrame([h5r] if h5r else []).to_csv(out / "h5_unrecognised_sources.csv", index=False)
+    h1_false_full = {**paired(col(wf_full, "C0"), col(wf_full, "C1"), rng), "unit": "pp"}
+    h5f = h5(df, models, rng, ceiling=False)
+    pd.DataFrame([x for x in (h5r, h5f) if x]).to_csv(out / "h5_unrecognised_sources.csv", index=False)
+    c0tab = c0_table(df, models)
+    c0tab.to_csv(out / "c0_acceptance.csv", index=False)
+    c0_models = ({r["scope"]: r["all"] for _, r in c0tab.iterrows() if r["scope"] != "pooled" and not isnan(r["all"])}
+                 if not c0tab.empty else {})
 
     acc = acceptance_table(df)
     acc.to_csv(out / "acceptance_by_condition.csv", index=False)
@@ -1113,17 +1386,20 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     per_model = []
     for m in models:
         r, a = fam[(m, "real_obscure")], fam[(m, "all")]
-        per_model.append({
-            "model": m, "cells": int((df["model"] == m).sum()),
-            "c0_acceptance": df[(df["model"] == m) & (df["condition"] == "C0") & ~df["interpreter"]]["accepted"].mean(),
-            "h1_c1_vs_c0_real": find(r, "H1", "C1 vs C0").get("delta", np.nan),
-            "h2_c3_vs_c2_real": find(r, "H2", "C3 vs C2").get("delta", np.nan),
-            "h2_c4_vs_c1_real": find(r, "H2", "C4 vs C1").get("delta", np.nan),
-            "h2b_disc_c5_vs_c0_real": find(r, "H2b", "C5 vs C0", "discrimination index").get("delta", np.nan),
-            "h4_interpreter_all": find(a, "H4", "interpreter vs none (C1, C2)").get("delta", np.nan),
-            "scope_correct_share": model_scope_correct(df, scope, m),
-            "parse_failed_rate": pf.get(m, {}).get("parse_failed_rate", ""),
-            "cost_usd": pf.get(m, {}).get("cost_usd", "")})
+        row = {"model": m, "cells": int((df["model"] == m).sum()),
+               "c0_acceptance": df[(df["model"] == m) & (df["condition"] == "C0") & ~df["interpreter"]]["accepted"].mean()}
+        for key, rows, args in (("h1_c1_vs_c0_real", r, ("H1", "C1 vs C0")), ("h2_c3_vs_c2_real", r, ("H2", "C3 vs C2")),
+                                ("h2_c4_vs_c1_real", r, ("H2", "C4 vs C1")),
+                                ("h2b_disc_c5_vs_c0_real", r, ("H2b", "C5 vs C0", "discrimination index")),
+                                ("h4_interpreter_all", a, ("H4", "interpreter vs none (C1, C2)"))):
+            t, f = find(rows, *args), find(rows, *args, primary=False)
+            row.update({key: t.get("delta", np.nan), f"{key}_testable": testable(t), f"{key}_n_pairs": t.get("n_pairs", 0)})
+            if f:   # inflation tests: the full-sample result beside the pre-registered one (§7)
+                row[f"{key}_full"] = f.get("delta", np.nan)
+        row.update({"scope_correct_share": model_scope_correct(df, scope, m),
+                    "parse_failed_rate": pf.get(m, {}).get("parse_failed_rate", ""),
+                    "cost_usd": pf.get(m, {}).get("cost_usd", "")})
+        per_model.append(row)
     per_model_df = pd.DataFrame(per_model)
     per_model_df.to_csv(out / "per_model.csv", index=False)
     pf = parse_failure_outputs(raw_dir, models, out)
@@ -1158,7 +1434,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
                            ["condition", "n", "credential_citation_rate", "abstention_rate", "mean_confidence"],
                            ["Condition", "n", "credential-citation rate", "abstention rate", "mean confidence"],
                            {"credential_citation_rate": pct, "abstention_rate": pct, "mean_confidence": lambda v: num(v, 0)})
-    ctx = {"fam": fam, "h1_false": h1_false, "h5": h5r, "disc_real": dreal, "models": models, "c0": c0,
+    ctx = {"fam": fam, "h1_false": h1_false, "h1_false_full": h1_false_full, "h5": h5r, "h5_full": h5f,
+           "disc_real": dreal, "models": models, "c0": c0, "c0_models": c0_models,
            "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_text(cfg),
            "n_judged": str(n_scored), "kappa": kappa_text(gate, cfg), "scope_md": scope_md, "citation_md": citation_md,
            "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4"),
@@ -1169,7 +1446,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     synthetic = bool(df["synthetic"].any())
     notes = draft_notes(draft_text)
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
-                             gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats)
+                             gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats,
+                             baseline=baseline_section(c0tab, c0, fam, models))
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1177,8 +1455,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
                   + ". Check every sentence against results_summary.md before pasting. -->\n\n")
         (out / "REPORT_DRAFT.filled.md").write_text(banner + filled_draft(draft_text, entries), encoding="utf-8",
                                                      newline="\n")
-    return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "fam": fam,
-            "rob": rob, "caveats": caveats,
+    return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "h5_full": h5f, "fam": fam,
+            "rob": rob, "caveats": caveats, "c0_table": c0tab,
             "source": source, "gate": gate, "forced": forced, "figures": fig_paths, "problems": setting_problems}
 
 
@@ -1287,7 +1565,7 @@ HEADLINE_SET = {"H1": "real_obscure", "H2": "real_obscure", "H2b": "real_obscure
 def conclusion(r: dict) -> str:
     """What one primary test concludes. For H3 it is the §7 decision rule; for the others, the
     direction when p_holm < .05, else no reliable difference."""
-    if not r or not r.get("n_pairs"):
+    if not testable(r):
         return "n/a"
     if r["hypothesis"] == "H3":
         return "supported" if h3_verdict(r)[0] else "not supported"
@@ -1303,11 +1581,12 @@ def label_of(r: dict) -> str:
 
 
 def brief(r: dict) -> str:
-    """'+12.0 (+3.0 to +21.0), p_holm 0.012, 9 pairs', or why there is no result."""
-    if not r or not r.get("n_pairs"):
-        return "n/a: every pair at the C0 ceiling" if r and r.get("n_ceiling_dropped") else "n/a"
-    return (f"{value(r)} ({value(r, 'ci_low')} to {value(r, 'ci_high')}), p_holm {fmt_p(r.get('p_holm'))}, "
-            f"{r['n_pairs']} pair{'s' if r['n_pairs'] != 1 else ''}")
+    """'+12.0 (+3.0 to +21.0), p_holm 0.012, 9 pairs', or why it is not testable."""
+    if not r:
+        return "n/a"
+    if not testable(r):
+        return f"not testable: {why_short(r)}"
+    return f"{value(r)} ({value(r, 'ci_low')} to {value(r, 'ci_high')}), p_holm {fmt_p(r.get('p_holm'))}, {pairs_txt(r)}"
 
 
 def outcome(conclusions) -> str:
@@ -1403,7 +1682,7 @@ def h4_caveats(pf: dict | None, fam) -> list[str]:
             rel = f"{a / b:.1f} times the parse-failure rate of"
         own = find(fam.get((c["model"], "all"), []), "H4", "interpreter vs none (C1, C2)")
         own_txt = (f" (interpreter − none = {value(own)} points, 95% CI {value(own, 'ci_low')} to "
-                   f"{value(own, 'ci_high')})" if own.get("n_pairs") else "")
+                   f"{value(own, 'ci_high')})" if testable(own) else "")
         out.append(f"{c['model']}'s interpreter arm had {rel} the same conditions without it ({pct(a, 1)} vs "
                    f"{pct(b, 1)}), so its own H4 result{own_txt} carries that caveat")
     return out
@@ -1436,9 +1715,10 @@ def robustness_section(rob: dict) -> list[str]:
              "H3 it is the §7 decision rule. Each check re-runs the whole procedure: pair values, the C0-ceiling rule "
              "and Holm over the eight tests. The tables show each test at its headline claim-type set; the CSVs "
              "hold all three.", "",
-             "Every result gives its number of pairs. When every remaining pair is at the C0 ceiling, an inflation "
-             "test (H1, H2) has no pairs left and cannot be run; such tests are listed apart from conclusions that "
-             "change. A result on 2 or 3 pairs is too thin to read on its own.", ""]
+             "Every result gives its number of pairs. A test with fewer than 3 pairs, or with the same difference in "
+             "every pair, is not testable (the degeneracy guard, `DEVIATIONS.md`); with the C0-ceiling rule this "
+             "happens to inflation tests (H1, H2) when too few pairs are below the ceiling. Such tests are listed "
+             "apart from conclusions that change.", ""]
 
     def names(t: pd.DataFrame) -> str:
         return "; ".join(f"{r['test']} ({TYPE_LABEL[r['claim_type']]})" for _, r in t.iterrows())
@@ -1457,7 +1737,7 @@ def robustness_section(rob: dict) -> list[str]:
         return out
 
     def cell(r, cols) -> str:
-        cs = [r[c] for c in cols]
+        cs = ["not testable" if r[c] == "n/a" else r[c] for c in cols]
         return {"same": f"same: {cs[0]}", "changes": "**changes**: " + " / ".join(cs),
                 "testable only in some": "testable only in some: " + " / ".join(cs),
                 "not testable": "not testable"}[r["outcome"]]
@@ -1473,7 +1753,7 @@ def robustness_section(rob: dict) -> list[str]:
             lines.append(f"| {r['test']} | {TYPE_LABEL[r['claim_type']]} | {r['all_models']} | {r['without']} | "
                          f"{cell(r, ['conclusion_all_models', 'conclusion_without'])} |")
         lines += [""] + verdict(w, f"when {m} is left out",
-                               f"because without {m} every remaining pair is at the C0 ceiling") + [""]
+                               f"because without {m} too few pairs are below the C0 ceiling") + [""]
     b = rob["bounds"]
     if not b.empty:
         lines += [f"### 2. Bounds for {m}", "",
@@ -1489,7 +1769,7 @@ def robustness_section(rob: dict) -> list[str]:
         lines += ["", "Setting failed cells to false or true also changes which pairs sit at the C0 ceiling, so the "
                   "number of pairs can differ between columns.", ""]
         lines += verdict(b, "within these bounds",
-                         "because the C0-ceiling rule leaves no pairs under some of the treatments") + [""]
+                         "because the C0-ceiling rule leaves too few pairs under some of the treatments") + [""]
     return lines
 
 
@@ -1504,8 +1784,89 @@ def gate_line(gate: dict | None) -> str:
             "none": "no main-judge scores yet"}[g.get("status", "none")]
 
 
+def brief_full(f: dict) -> str:
+    """brief() for a full-sample result: outside the Holm family, so its p is unadjusted."""
+    if not testable(f):
+        return f"not testable: {why_short(f)}"
+    return f"{value(f)} ({value(f, 'ci_low')} to {value(f, 'ci_high')}), p {fmt_p(f.get('p'))} unadjusted, {pairs_txt(f)}"
+
+
+def baseline_section(c0tab: pd.DataFrame, c0: dict, fam: dict, models) -> list[str]:
+    """C0 acceptance per model and claim type, the C0-ceiling rule, and each primary test beside its full-sample
+    result, naming the informative one (degeneracy guard, DEVIATIONS.md, 15 Nov 2026)."""
+    if c0tab is None or c0tab.empty:
+        return []
+    per = {r["scope"]: r for _, r in c0tab.iterrows()}
+    lines = ["## Baseline (C0) and the C0-ceiling rule", "",
+             "C0 acceptance by claim type and truth: a claim's value is its share of parsed C0 responses accepted, a "
+             "cell the mean over its claims; pooled weights models equally. The last two columns count the pairs at the "
+             "C0 ceiling in each scope: both twins accepted in every C0 response there.", "",
+             "| Model | C0 responses | real-obscure true | real-obscure false | invented true | invented false | "
+             "all claims | real-obscure pairs at the C0 ceiling | invented pairs at the C0 ceiling |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for _, r in c0tab.iterrows():
+        lines.append(f"| {r['scope']} | {int(r['n_responses'])} | {pct(r['real_obscure_true'])} | "
+                     f"{pct(r['real_obscure_false'])} | {pct(r['invented_true'])} | {pct(r['invented_false'])} | "
+                     f"{pct(r['all'])} | {int(r['real_obscure_ceiling'])} of {int(r['real_obscure_pairs'])} | "
+                     f"{int(r['invented_ceiling'])} of {int(r['invented_pairs'])} |")
+    every = [m for m in models if m in per and per[m]["all"] >= 1 - 1e-12]
+    rest = [f"{m} {pct(per[m]['all'])}: {pct((per[m]['real_obscure_true'] + per[m]['real_obscure_false']) / 2)} "
+            f"real-obscure, {pct((per[m]['invented_true'] + per[m]['invented_false']) / 2)} invented"
+            for m in models if m in per and per[m]["all"] < 1 - 1e-12]
+    detail = "; ".join(([f"{and_list(every)} accepted every C0 response"] if every else []) + rest)
+    lines += ["", " ".join(x for x in (baseline_note(c0), f"Per model: {detail}." if detail else "") if x), ""]
+    if "pooled" in per:
+        p = per["pooled"]
+        lines += ["The pre-registered C0-ceiling rule (§7) drops a pair from the inflation tests (H1, H2, and the "
+                  "exploratory H5) when both twins were accepted in every C0 response in that scope. Pooled over "
+                  f"models, {int(p['real_obscure_ceiling'])} of {int(p['real_obscure_pairs'])} real-obscure and "
+                  f"{int(p['invented_ceiling'])} of {int(p['invented_pairs'])} invented pairs are at the ceiling. "
+                  "Real-obscure pairs below the ceiling in each model's own scope: "
+                  + ", ".join(f"{m} {int(per[m]['real_obscure_pairs'] - per[m]['real_obscure_ceiling'])}"
+                              for m in models if m in per) + ".", ""]
+    real, allp = fam[("pooled", "real_obscure")], fam[("pooled", "all")]
+    shown = [(r, real, "real_obscure") for r in real if r["primary"] and r["hypothesis"] != "H4"]
+    shown += [(r, allp, "all") for r in allp if r["primary"] and r["hypothesis"] == "H4"]
+    lines += ["Each primary test at its headline claim-type set, pooled over models, with the full-sample result beside "
+              "it (§7). Only the inflation tests (H1, H2) use the C0-ceiling rule; H2b, H3 and H4 are run on all pairs, "
+              "so for them the full sample is the pre-registered test itself.", "",
+              "| Test | Pairs | Pre-registered test | Full sample (all pairs) | Informative result |", "|---|---|---|---|---|"]
+    untested = []
+    for r, rows, ctype in shown:
+        f = find(rows, r["hypothesis"], r["comparison"], r["measure"], primary=False)
+        if f:
+            info = ("pre-registered test" if testable(r) else "**full sample**" if testable(f) else "neither is testable")
+        else:
+            info = "pre-registered test" if testable(r) else "not testable"
+        lines.append(f"| {label_of(r)} | {TYPE_LABEL[ctype]} | {brief(r)} | "
+                     f"{brief_full(f) if f else 'same as the pre-registered test'} | {info} |")
+        if not testable(r):
+            untested.append((r, f, ctype))
+    lines += [""]
+    if untested:
+        lines += ["**Not testable as pre-registered.** A test with fewer than 3 pairs, or with the same difference in "
+                  "every pair, has no usable variance estimate. It is reported with its descriptive numbers, without a "
+                  "p-value or CI, and enters the Holm family with p = 1, so it cannot make another test easier to pass "
+                  "(degeneracy guard, a post-data correction: `DEVIATIONS.md`, 15 Nov 2026).", ""]
+        lines += [f"- {label_of(r)} ({TYPE_LABEL[ctype]}): {why_not(r)}." for r, f, ctype in untested]
+        informed = [label_of(r) for r, f, _ in untested if testable(f)]
+        if informed:
+            lines += ["", f"For {'these tests' if len(informed) > 1 else 'this test'} ({'; '.join(informed)}) the "
+                      f"full-sample result beside {'each' if len(informed) > 1 else 'it'} is the informative one. Its p "
+                      "is unadjusted, because the full-sample results are reported alongside the Holm family, not in it."]
+        lines += [""]
+    else:
+        lines += ["Every primary test at its headline claim-type set is testable.", ""]
+    h1 = find(real, "H1", "C1 vs C0")
+    if h1:
+        r1, full1 = informative(h1, find(real, "H1", "C1 vs C0", primary=False))
+        lines += [f"**H1 (real-obscure pairs, pooled).** {h1_verdict(r1, full1)} "
+                  f"{'Full sample' if full1 else 'Pre-registered test'}: {stat(r1, adjusted=not full1)}.", ""]
+    return lines
+
+
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
-                   gate=None, forced=False, pf=None, rob=None, caveats=()) -> str:
+                   gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=()) -> str:
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
@@ -1525,7 +1886,10 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     lines += ["Headline numbers: real-obscure pairs for H1–H3 and H2b (pre-registration rev 3), all pairs for H4, "
               "invented minus real-obscure for H5 (exploratory). Differences are in percentage points unless marked; "
               "p_holm is Holm-adjusted over the eight primary tests. The tests and decision rules are those of "
-              "PREREGISTRATION.md §7 (rev 3.3). Check every sentence against the tables below before pasting it.", "",
+              "PREREGISTRATION.md §7 (rev 3.3), with one post-data correction (`DEVIATIONS.md`, 15 Nov 2026): a test "
+              "with fewer than 3 pairs, or with the same difference in every pair, is not testable; it gets no p-value "
+              "and enters Holm with p = 1. Check every sentence against the tables below before pasting it.", "",
+              *baseline,
               "## Paste into REPORT_DRAFT.md", "",
               "`REPORT_DRAFT.filled.md` in this folder is the draft with these substituted, for checking.", ""]
     for k, e in enumerate(entries, 1):
@@ -1539,6 +1903,10 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "(13–15 Nov 2026); only the pilot (10–11 Nov, excluded from analysis) came before it.",
               "- §4.8: use the per-model table and the scale comparison below, and report each model's "
               "parse-failure rate with whether failures concentrate in a condition (section \"Parse failures\").",
+              "- §4.2–4.3: where a pre-registered test is not testable, report it as such, with the full-sample result "
+              "beside it as the informative one (section \"Baseline (C0) and the C0-ceiling rule\").",
+              "- §3.5 and Appendix A state the degeneracy guard (`DEVIATIONS.md`, 15 Nov 2026) and the baseline "
+              "ceiling; keep both if those sections are rewritten.",
               *notes]
     if rob:
         lines += ["- §4.7 and §5: the robustness checks below are exploratory (added after the parse-failure pattern "
@@ -1566,18 +1934,26 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
                        ("pooled models, invented pairs", ("pooled", "invented")),
                        ("pooled models, all pairs", ("pooled", "all"))):
         rows = pd.DataFrame(fam[key])
+        ok = [testable(r) for r in fam[key]]
+        rows["dropped"] = [r.get("n_ceiling_dropped") or "–" for r in fam[key]]
         rows["Δ"] = [value(r) for r in fam[key]]
-        rows["95% CI"] = [f"{value(r, 'ci_low')} to {value(r, 'ci_high')}" for r in fam[key]]
+        rows["95% CI"] = [f"{value(r, 'ci_low')} to {value(r, 'ci_high')}" if t else "–" for r, t in zip(fam[key], ok)]
+        for k in ("p", "p_holm", "p_perm_holm"):
+            rows[f"{k}_"] = [fmt_p(r[k]) if t and (r["primary"] or k == "p") else "not testable" if not t else "–"
+                             for r, t in zip(fam[key], ok)]
+        rows["why"] = [why_short(r) if not t else "" for r, t in zip(fam[key], ok)]
         lines += [f"## Tests: {label}", "",
-                  table_md(rows, ["hypothesis", "comparison", "measure", "sample", "primary", "n_pairs", "Δ", "95% CI",
-                                  "p", "p_holm", "p_perm_holm"],
-                           ["H", "comparison", "measure", "sample", "primary", "pairs", "Δ", "95% CI", "p", "p_holm",
-                            "p_holm (permutation)"],
-                           {"p": fmt_p, "p_holm": fmt_p, "p_perm_holm": fmt_p}), ""]
+                  table_md(rows, ["hypothesis", "comparison", "measure", "sample", "primary", "n_pairs", "dropped", "Δ",
+                                  "95% CI", "p_", "p_holm_", "p_perm_holm_", "why"],
+                           ["H", "comparison", "measure", "sample", "primary", "pairs", "dropped at the C0 ceiling", "Δ",
+                            "95% CI", "p", "p_holm", "p_holm (permutation)", "not testable because"]), ""]
     lines += ["Acceptance and discrimination-index differences are in percentage points; confidence in points on the "
-              "0–100 scale; H3 is a share. Tests are paired t-tests over pairs. The permutation column is the "
-              "robustness check: with n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach "
-              "p_holm < 0.05 over eight tests. `primary_tests.csv` has every model and claim type.", ""]
+              "0–100 scale; H3 is a share. Tests are paired t-tests over pairs. Rows with primary False are the "
+              "full-sample results reported beside the stratified tests (§7), and the H2b C1–C4 summary; they are not in "
+              "the Holm family, so their p is unadjusted. A test that is not testable shows its mean (Δ) and pair "
+              "count only, and enters the Holm family with p = 1. The permutation column is the robustness check: with "
+              "n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach p_holm < 0.05 over "
+              "eight tests. `primary_tests.csv` has every model and claim type.", ""]
     h3 = find(fam[("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
     verdict = (f"Judge results are withheld: {withheld_text(gate or {})}" if source == "withheld" else
                f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}")
@@ -1598,28 +1974,39 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
         lines += [dist_table_md(sdist, ctype), ""]
     lines += ["Per model: `scope_distribution.csv`. Figure 3 shows raw shares of all judged justifications, "
               "including those that do not mention the credential.", ""]
+    def pm_cell(r, key) -> str:
+        """The pre-registered test (n/t if not testable; n/a if it has no pairs by design), then the full sample."""
+        if r.get(f"{key}_testable"):
+            pre = signed(r[key])
+        else:
+            pre = "n/t" if (r.get(f"{key}_n_pairs") or f"{key}_full" in r) else "n/a"
+        full = r.get(f"{key}_full")
+        return pre + ("" if full is None or isnan(full) else f" / {signed(full)}")
+
+    recs = per_model_df.to_dict("records")
     shown = pd.DataFrame({
         "Model": per_model_df["model"], "cells": per_model_df["cells"],
         "C0 acceptance": per_model_df["c0_acceptance"].map(pct),
-        "H1 C1−C0": per_model_df["h1_c1_vs_c0_real"].map(signed),
-        "H2 C3−C2": per_model_df["h2_c3_vs_c2_real"].map(signed),
-        "H2 C4−C1": per_model_df["h2_c4_vs_c1_real"].map(signed),
-        "H2b index C5−C0": per_model_df["h2b_disc_c5_vs_c0_real"].map(signed),
-        "H4 interpreter−none": per_model_df["h4_interpreter_all"].map(signed),
+        **{name: [pm_cell(r, key) for r in recs] for name, key in (
+            ("H1 C1−C0", "h1_c1_vs_c0_real"), ("H2 C3−C2", "h2_c3_vs_c2_real"), ("H2 C4−C1", "h2_c4_vs_c1_real"),
+            ("H2b index C5−C0", "h2b_disc_c5_vs_c0_real"), ("H4 interpreter−none", "h4_interpreter_all"))},
         "scope: share scored 2": per_model_df["scope_correct_share"].map(pct),
         "parse failures": per_model_df["parse_failed_rate"].map(lambda v: pct(v, 1)),
         "cost USD": per_model_df["cost_usd"].map(lambda v: num(v, 2))})
     lines += h4_section(fam, list(per_model_df["model"]), caveats)
     lines += ["## Per model", "",
-              "Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs.", "",
+              "Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs. Each H1 and H2 cell gives "
+              "the pre-registered test (C0-ceiling pairs dropped in that model's own scope), then, after the slash, the "
+              "full-sample result. n/t: not testable (fewer than 3 pairs, or the same difference in every pair); "
+              "n/a: no data by design (gemini-3.5-flash-lite has no interpreter arm).", "",
               table_md(shown, list(shown.columns), list(shown.columns)), ""]
-    pm = per_model_df.set_index("model")
-    if {"gpt-oss-120b", "gpt-oss-20b"} <= set(pm.index):
+    pm = {r["model"]: r for r in recs}
+    if {"gpt-oss-120b", "gpt-oss-20b"} <= set(pm):
         lines += [f"**Scale within family (§6).** Share of credential mentions scored 2: "
-                  f"{pct(pm.loc['gpt-oss-120b', 'scope_correct_share'])} for gpt-oss-120b vs "
-                  f"{pct(pm.loc['gpt-oss-20b', 'scope_correct_share'])} for gpt-oss-20b. C1 − C0 on real-obscure pairs: "
-                  f"{signed(pm.loc['gpt-oss-120b', 'h1_c1_vs_c0_real'])} vs "
-                  f"{signed(pm.loc['gpt-oss-20b', 'h1_c1_vs_c0_real'])} points.", ""]
+                  f"{pct(pm['gpt-oss-120b']['scope_correct_share'])} for gpt-oss-120b vs "
+                  f"{pct(pm['gpt-oss-20b']['scope_correct_share'])} for gpt-oss-20b. C1 − C0 on real-obscure pairs, "
+                  f"pre-registered test / full sample: {pm_cell(pm['gpt-oss-120b'], 'h1_c1_vs_c0_real')} vs "
+                  f"{pm_cell(pm['gpt-oss-20b'], 'h1_c1_vs_c0_real')} points.", ""]
     lines += parse_failure_section(pf)
     lines += robustness_section(rob)
     lines += ["## Files", "", "| File | Contents |", "|---|---|",
@@ -1634,7 +2021,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "| `confidence_delta.csv` | Confidence minus the same item's C0 mean |",
               "| `scope_accuracy.csv` | Raw scope score counts per condition (Figure 3) |",
               "| `scope_distribution.csv` | H3: mention share and 0/1/2 shares with 95% CIs, per scope and claim type |",
-              "| `h5_unrecognised_sources.csv` | H5 (exploratory) |",
+              "| `h5_unrecognised_sources.csv` | H5 (exploratory): with the C0-ceiling rule, and the full sample |",
+              "| `c0_acceptance.csv` | C0 acceptance per model and claim type, and the pairs at the C0 ceiling per scope |",
               "| `rep_variance.csv` | Repetition variance (§7) |",
               "| `per_model.csv` | Per-model summary (§4.8) |",
               "| `parse_failures_by_condition.csv` | Parse failures per model and condition, flagged over double the model's rate |",

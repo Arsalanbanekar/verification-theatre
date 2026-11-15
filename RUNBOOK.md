@@ -109,7 +109,7 @@ python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/g
 The last lines should be:
 ```
 results -> data\synthetic\results
-  scope-accuracy source: judge (the judges' weighted kappa is 0.87 on 79 responses, at least 0.6: judge results are reported); 27 draft slots filled automatically, 0 need a hand fill
+  scope-accuracy source: judge (the judges' weighted kappa is 0.87 on 79 responses, at least 0.6: judge results are reported); 28 draft slots filled automatically, 0 need a hand fill
 ```
 Open `data/synthetic/results/results_summary.md`, `REPORT_DRAFT.filled.md` and the four PNGs.
 The fake data raises acceptance in C1–C4, separates the twins in C5, and has the interpreter
@@ -423,7 +423,7 @@ python src/analyse.py
 ```
 ```
 results -> data\results
-  scope-accuracy source: judge (the judges' weighted kappa is 0.74 on 81 responses, at least 0.6: judge results are reported); 27 draft slots filled automatically, 0 need a hand fill
+  scope-accuracy source: judge (the judges' weighted kappa is 0.74 on 81 responses, at least 0.6: judge results are reported); 28 draft slots filled automatically, 0 need a hand fill
 ```
 - The source reads one of three values:
   - `judge`: the §5 gate passed.
@@ -440,7 +440,7 @@ Outputs in `data/results/`:
 
 | File | Use |
 |---|---|
-| `results_summary.md` | Ready-to-paste text for every slot, test tables, per-model table, robustness check |
+| `results_summary.md` | Baseline (C0) and C0-ceiling section, ready-to-paste text for every slot, test tables, per-model table, robustness check |
 | `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |
 | `fig1_acceptance.png` | Figure 1, §4.2 |
 | `fig2_discrimination.png` | Figure 2, §4.4 |
@@ -473,6 +473,16 @@ How to read the numbers:
   qwen3.8-27b's does, at 15.8% against 7.9%; keep that caveat beside its H4 result.
 - **Small samples.** With 10 real-obscure pairs, a modest effect can miss significance. Say so
   using the CI rather than calling it "no effect". The generated sentences already do this.
+- **Not testable.** A test with fewer than 3 pairs, or with the same difference in every pair,
+  is reported as "not testable". It shows its mean and pair count, with no p-value or CI, and
+  enters Holm with p = 1. This is a post-data correction (`DEVIATIONS.md`, 15 Nov). The C0-ceiling
+  rule can leave an inflation test (H1, H2) with too few pairs.
+  - The summary's "Baseline (C0) and the C0-ceiling rule" section lists such tests and gives the
+    full-sample result beside each.
+  - Report the test as not testable, and use the full-sample result as the informative one, with
+    its p labelled unadjusted.
+  - If credentials lowered acceptance, the text says H1 is not supported and the effect runs the
+    opposite way. Keep that wording.
 
 The tests and decision rules are those of `PREREGISTRATION.md` §7: rev 3.3, fixed before any
 data, plus the judge gate of rev 3.4, fixed after the pilot's first run and before the main run.

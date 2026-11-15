@@ -174,12 +174,13 @@ def test_every_draft_placeholder_maps_to_a_slot():
     entries = A.placeholder_entries(text, {})
     assert entries[0]["slot"] == "_INSTRUCTION"
     slots = [e["slot"] for e in entries[1:]]
-    assert None not in slots and len(slots) == 27
+    assert None not in slots and len(slots) == 28
     assert slots == ["N_MODELS", "HEADLINE", "DISC_ABSTRACT", "H4_SENTENCE", "H5_ABSTRACT", "RESULT_PHRASE",
                      "MODELS_PARAGRAPH", "SETTINGS", "JUDGE_MODEL", "N_JUDGED", "KAPPA",
                      "C0_real_true", "C0_real_false", "C0_inv_true", "C0_inv_false", "C0_SENTENCE",
                      "H1_STAT", "C32_STAT", "C41_STAT", "H2_SENTENCE", "DISCRIMINATION",
-                     "SCOPE_TABLE", "CITATION_TABLE", "H5_DELTA", "H5_46", "H4_STAT", "N_STUDY_MODELS"]
+                     "SCOPE_TABLE", "CITATION_TABLE", "H5_DELTA", "H5_46", "H4_STAT", "N_STUDY_MODELS",
+                     "BASELINE_CEILING"]
     # robust to re-wrapping: one line per paragraph gives the same mapping
     unwrapped = re.sub(r"(?<=\S)\n(?=[^\n#>|\-\d])", " ", text)
     assert unwrapped != text
@@ -219,7 +220,9 @@ def test_t_test_matches_scipy():
         ci = ref.confidence_interval(0.95)
         assert p == pytest.approx(ref.pvalue) and lo == pytest.approx(ci.low) and hi == pytest.approx(ci.high)
         assert A.t_test(x, 0.05)[3] == pytest.approx(sps.ttest_1samp(x, 0.05).pvalue)
-    assert A.t_test([0.2, 0.2, 0.2])[3] == 0.0 and A.t_test([0.0, 0.0])[3] == 1.0
+    for flat in ([0.2, 0.2, 0.2], [0.0, 0.0]):                              # zero variance: no p, no CI
+        m, lo, hi, p = A.t_test(flat)
+        assert m == pytest.approx(flat[0]) and np.isnan(lo) and np.isnan(hi) and np.isnan(p)
     assert np.isnan(A.t_test([0.3])[3])
 
 
@@ -254,7 +257,165 @@ def test_ceiling_pairs_leave_inflation_tests_only():
     h1 = A.find(rows, "H1", "C1 vs C0")
     full = A.find(rows, "H1", "C1 vs C0", primary=False)
     assert (h1["n_pairs"], h1["n_ceiling_dropped"], full["n_pairs"]) == (2, 1, 3)
+    assert h1["not_testable"] == "too few pairs" and np.isnan(h1["p"]) and np.isnan(h1["p_holm"])   # the guard
     assert A.find(rows, "H2b", "C5 vs C0", "discrimination index")["n_pairs"] == 3   # H2b keeps every pair
+
+
+# ---------------------------------------------------------------- degeneracy guard (DEVIATIONS.md, 15 Nov 2026)
+
+@pytest.mark.parametrize("x,why", [
+    ([], "no pairs"), ([0.2], "too few pairs"), ([0.1, 0.3], "too few pairs"), ([-2 / 9, -2 / 9], "too few pairs"),
+    ([0.2, 0.2, 0.2], "zero variance"),
+    ([1 / 3 - 5 / 9, 2 / 9 - 4 / 9, 7 / 9 - 1.0], "zero variance"),              # equal up to rounding
+    ([0.1, 0.2, 0.4], ""),
+])
+def test_guard_marks_too_few_pairs_and_zero_variance(x, why):
+    r = A.one_sample(x, 0.0, np.random.default_rng(0))
+    assert r["not_testable"] == why and A.testable(r) == (why == "")
+    if why:                                                                    # descriptive numbers only
+        assert all(np.isnan(r[k]) for k in ("p", "ci_low", "ci_high", "p_perm"))
+        if x:
+            assert r["n_pairs"] == len(x) and r["delta"] == pytest.approx(np.mean(x))
+            assert (r["diff_min"], r["diff_max"]) == (pytest.approx(min(x)), pytest.approx(max(x)))
+    else:
+        assert r["p"] == pytest.approx(sps.ttest_1samp(x, 0.0).pvalue)
+
+
+def groq_pattern():
+    """Ten real-obscure pairs: eight at the C0 ceiling; the other two both fall by 1/3 at C1 (identical differences),
+    as in the pooled Groq data. C5 separates the twins by a varying amount, so H2b stays testable."""
+    cells = []
+    for k in range(10):
+        c0 = [1, 1, 1] if k < 8 else [1, 1, 0]
+        c1 = ([1, 1, 1] if k % 2 else [1, 0, 0]) if k < 8 else [1, 0, 0]
+        for truth in (True, False):
+            c5 = [1, 1, 1] if truth else ([1, 1, 1], [1, 1, 0], [1, 0, 0])[k % 3]
+            cells += [(f"p{k}", truth, "C0", c0), (f"p{k}", truth, "C1", c1), (f"p{k}", truth, "C2", c0),
+                      (f"p{k}", truth, "C3", c1), (f"p{k}", truth, "C4", [1, 0, 0]), (f"p{k}", truth, "C5", c5)]
+    return tiny(cells)
+
+
+def test_untestable_tests_enter_holm_with_p_one():
+    df = groq_pattern()
+    assert A.ceiling_pairs(df, ["m"]) == {f"p{k}" for k in range(8)}
+    rows = A.primary_family(df, pd.DataFrame(columns=["response_id", "score"]), ["m"], ("real_obscure",),
+                            np.random.default_rng(0))
+    prim = [r for r in rows if r["primary"]]
+    assert len(prim) == 8                                                      # the family stays at eight
+    h1, full = A.find(rows, "H1", "C1 vs C0"), A.find(rows, "H1", "C1 vs C0", primary=False)
+    assert (h1["n_pairs"], h1["n_ceiling_dropped"], h1["not_testable"]) == (2, 8, "too few pairs")
+    assert h1["delta"] == pytest.approx(-1 / 3) and h1["diff_min"] == pytest.approx(h1["diff_max"])
+    assert all(np.isnan(h1[k]) for k in ("p", "ci_low", "ci_high", "p_holm", "p_perm_holm"))   # never p = 0
+    assert A.why_not(h1) == ("only 2 pairs were left after 8 at the C0 ceiling were dropped, both with a "
+                             "difference of −33.3 points")
+    assert A.testable(full) and full["n_pairs"] == 10 and full["p"] < 0.05
+    testable = [r for r in prim if A.testable(r)]
+    assert [r["hypothesis"] for r in testable] == ["H2b"]                      # H3: no scores; H4: no interpreter arm
+    ps = [r["p"] if A.testable(r) else 1.0 for r in prim]
+    assert np.allclose([r["p_holm"] for r in testable], [p for p, r in zip(A.holm(ps), prim) if A.testable(r)])
+    assert testable[0]["p_holm"] == pytest.approx(min(1.0, 8 * testable[0]["p"]))   # corrected over all eight
+    assert A.brief(h1) == "not testable: 2 pairs after 8 at the C0 ceiling, same difference"
+    assert A.stat(h1).startswith("not testable, because only 2 pairs")
+
+
+def test_informative_result_and_h1_direction():
+    lower = {"hypothesis": "H1", "n_pairs": 10, "delta": -0.18, "ci_low": -0.24, "ci_high": -0.13, "p": 0.0001,
+             "p_holm": np.nan, "unit": "pp", "not_testable": ""}
+    flat2 = {"hypothesis": "H1", "n_pairs": 2, "n_ceiling_dropped": 8, "delta": -0.22, "diff_min": -0.22,
+             "diff_max": -0.22, "p": np.nan, "p_holm": np.nan, "unit": "pp", "not_testable": "too few pairs"}
+    r, is_full = A.informative(flat2, lower)
+    assert r is lower and is_full and A.moved(lower, full=True) and not A.moved(lower)   # full: unadjusted p
+    assert A.h1_verdict(r, is_full) == ("H1 is not supported: in the full sample the credential lowered acceptance, "
+                                        "the opposite of the predicted direction.")
+    raised = {**lower, "delta": 0.18, "ci_low": 0.13, "ci_high": 0.24}
+    assert A.h1_verdict(raised, True).startswith("H1 could not be tested as pre-registered")
+    assert A.h1_verdict({**raised, "p_holm": 0.01}, False) == "H1 is supported: the credential raised acceptance."
+    assert A.h1_verdict({**lower, "p_holm": 0.01}, False).endswith("the opposite of the predicted direction.")
+    assert A.h1_verdict({**lower, "p_holm": 0.3}, False) == "H1 is not supported: acceptance did not reliably change."
+    assert A.informative(lower, flat2) == (lower, False)                       # a testable primary is always read
+    text = A.with_full(flat2, lower)
+    assert text.startswith("not testable with the C0-ceiling rule, because only 2 pairs were left")
+    assert "full sample, the informative result: −18.0 points" in text and "p < 0.001, unadjusted" in text
+
+
+def ceiling_raw(src, dst):
+    """The Groq pattern on synthetic records (null scenario): every C0 response accepts, except the first rep of both
+    twins of real-09 and real-10 in gpt-oss-120b, so only those two pairs are below the pooled C0 ceiling, and at C1
+    both fall by the same amount (1/12). The other real-obscure pairs fall by 1/3 or 1/6, so acceptance falls in the
+    full sample."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for path in src.glob("*.jsonl"):
+        recs = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+        for r in recs:
+            if r["interpreter"] or r["condition"] not in ("C0", "C1"):
+                continue
+            k, rep, model = int(r["pair_id"].split("-")[1]), r["rep"], r["model"]
+            if r["condition"] == "C0":
+                accept = not (model == "gpt-oss-120b" and k >= 9 and r["claim_type"] == "real_obscure" and rep == 0)
+            elif r["claim_type"] == "real_obscure":
+                accept = (rep != 0 if k <= 4 else not (r["truth_value"] and rep == 0) if k <= 8
+                          else not (model == "gpt-oss-120b" and rep in (0, 1)))
+            else:
+                continue
+            parsed = {"accept": "true" if accept else "false", "confidence": 80, "reasons": ["prior_knowledge"],
+                      "justification": "synthetic"}
+            r.update(status="ok", parsed=parsed, raw_text=json.dumps(parsed), parse_error=None, attempt=1)
+        (dst / path.name).write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+
+
+def test_ceiling_scenario_end_to_end(scenario, tmp_path):
+    root, _ = scenario("null")
+    raw, graded = tmp_path / "raw", tmp_path / "graded"
+    ceiling_raw(root / "raw", raw)
+    G.grade_metrics(R.load_config(R.REPO / "models.yaml"), raw, graded)
+    res = run(tmp_path, raw, graded)
+    real = res["fam"][("pooled", "real_obscure")]
+    h1 = A.find(real, "H1", "C1 vs C0")
+    assert (h1["n_pairs"], h1["n_ceiling_dropped"]) == (2, 8) and not A.testable(h1) and np.isnan(h1["p_holm"])
+    assert h1["diff_min"] == pytest.approx(-1 / 12) and h1["diff_max"] == pytest.approx(-1 / 12)
+    for key, rows in res["fam"].items():                                       # every family: eight, Holm with p = 1
+        prim = [r for r in rows if r["primary"]]
+        assert len(prim) == 8, key
+        ps = [r["p"] if A.testable(r) else 1.0 for r in prim]
+        for r, ph in zip(prim, A.holm(ps)):
+            assert (np.isnan(r["p_holm"]) if not A.testable(r) else r["p_holm"] == pytest.approx(ph)), (key, r["comparison"])
+    s = res["slots"]
+    assert "the pre-registered test of credence inflation was not testable, because only 2 pairs" in s["HEADLINE"]
+    assert "in the full sample, a credential that certified nothing about the claim lowered acceptance" in s["HEADLINE"]
+    assert "the opposite of the predicted inflation" in s["HEADLINE"] and "unadjusted" in s["HEADLINE"]
+    assert s["H1_STAT"].endswith("H1 is not supported: in the full sample the credential lowered acceptance, the "
+                                 "opposite of the predicted direction.")
+    assert "full sample, the informative result" in s["C32_STAT"] and "is not testable" in s["C41_STAT"]
+    assert s["H2_SENTENCE"].startswith("With the C0-ceiling rule these tests were not testable")
+    assert "with the C0-ceiling rule the comparison was not testable" in s["H5_ABSTRACT"]
+    assert "8 of 10 real-obscure pairs were at the C0 ceiling" in s["BASELINE_CEILING"]
+    assert "left the H1 and H2 tests on real-obscure pairs not testable" in s["BASELINE_CEILING"]
+    assert s["BASELINE_CEILING"].startswith("Without a credential, the models accepted almost all claims, true and "
+                                            "false alike")
+    for slot, text in s.items():                                               # no nan, no nested parentheses
+        assert not re.search(r"\bnan\b|\binf\b", text), (slot, text)
+        depth = 0
+        for ch in text:
+            depth += (ch == "(") - (ch == ")")
+            assert depth <= 1, (slot, text)
+    assert not (res["h5"]["not_testable"] == "") and res["h5_full"]["not_testable"] == ""
+    c0 = res["c0_table"].set_index("scope")
+    assert c0.loc["gpt-oss-20b", "all"] == 1.0 and c0.loc["pooled", "real_obscure_ceiling"] == 8
+    assert c0.loc["gpt-oss-120b", "real_obscure_ceiling"] == 8 and c0.loc["gpt-oss-20b", "real_obscure_ceiling"] == 10
+    out = tmp_path / "results"
+    summary = (out / "results_summary.md").read_text(encoding="utf-8")
+    base = summary.split("## Baseline (C0) and the C0-ceiling rule")[1].split("## Paste into REPORT_DRAFT.md")[0]
+    assert "| Model | C0 responses | real-obscure true | real-obscure false | invented true | invented false |" in base
+    assert "At baseline the models accepted almost all claims, true and false alike" in base
+    assert "**Not testable as pre-registered.**" in base and "| **full sample** |" in base
+    assert "**H1 (real-obscure pairs, pooled).** H1 is not supported" in base
+    assert summary.index("## Baseline (C0)") < summary.index("## Paste into REPORT_DRAFT.md")
+    pre, full_cell = base.split("| H1 C1 vs C0 | real-obscure |")[1].split("|")[:2]
+    assert pre.strip().startswith("not testable") and " p " not in pre and "unadjusted, 10 pairs" in full_cell
+    assert len(pd.read_csv(out / "c0_acceptance.csv")) == len(MODELS) + 1
+    assert set(pd.read_csv(out / "h5_unrecognised_sources.csv")["sample"]) == {"C0-ceiling pairs dropped", "all pairs"}
+    filled = (out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8")
+    assert "8 of 10 real-obscure pairs were at the C0 ceiling" in filled.split("## Appendix A.")[1]
 
 
 def test_discrimination_index_is_true_minus_false():
@@ -387,7 +548,8 @@ def test_conclusion_and_outcome():
     assert A.conclusion({"hypothesis": "H3", "n_pairs": 9, "ci_high": 0.3, "p_holm": 0.01}) == "supported"
     assert A.outcome(["lower", "lower"]) == "same" and A.outcome(["lower", "no reliable difference"]) == "changes"
     assert A.outcome(["lower", "n/a", "lower"]) == "testable only in some" and A.outcome(["n/a", "n/a"]) == "not testable"
-    assert A.brief({"n_pairs": 0, "n_ceiling_dropped": 10}) == "n/a: every pair at the C0 ceiling"
+    assert A.brief({"n_pairs": 0, "n_ceiling_dropped": 10}) == "not testable: all 10 pairs at the C0 ceiling"
+    assert A.conclusion({"hypothesis": "H1", "n_pairs": 2, "delta": -0.2, "p_holm": 0.01}) == "n/a"   # under 3 pairs
 
 
 def test_bounds_change_only_that_models_failed_cells(scenario):
