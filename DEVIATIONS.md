@@ -60,6 +60,12 @@ with its date, time and reason.
   2. Nothing else is re-judged: the 570 valid judgements stand.
   3. The new rows are appended to `judge_main.jsonl` with stage `rejudge`. The truncated rows stay on disk, and the analysis uses each response's latest judgement.
   4. A re-asked response that is cut off again, or fails, is not asked a third time and stays missing. If the re-ask cannot run, the 30 are reported as missing (5%).
+
+  Outcome (16 Nov 2026, 00:55 IST; the re-ask ran 19:19–19:25 UTC on 15 Nov, at `5b56656`):
+  - All 30 re-asks returned a valid score: 18 scored 0 and 12 scored 1. They used 361 to 5,201 output tokens.
+  - Seven gateway time-outs (HTTP 504) were retried within the same re-ask, as transient failures are in the main run. Every attempt is logged.
+  - The re-ask cost 0.30 credits, 3.31 in all. All 600 sampled responses now have a valid judgement.
+  - At temperature 0 the re-asks did not reproduce the first replies (one finished in 361 tokens). Each re-ask is a fresh judgement with the same prompt, not a continuation.
 - 16 Nov 2026, 00:36 IST: one exploratory analysis added to `src/analyse.py` after seeing the H4 result, by the author's decision. It asks whether the interpreter improves accuracy or only lowers acceptance across the board.
   - It compares the discrimination index (acceptance of the true twin minus the false twin) on C1 and C2, with and without the interpreter. This is computed per interpreter-arm model and pooled over them, beside the true and false acceptance it comes from (`interpreter_discrimination.csv`).
   - It is labelled exploratory wherever it appears (`results_summary.md`, and a new slot in `REPORT_DRAFT.md` §4.7).
