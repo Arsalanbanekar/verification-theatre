@@ -1,0 +1,6 @@
+scope,n_responses,all,real_obscure_true,real_obscure_false,invented_true,invented_false,real_obscure_pairs,real_obscure_ceiling,invented_pairs,invented_ceiling
+gpt-oss-120b,120,1.0,1.0,1.0,1.0,1.0,10,10,10,10
+gpt-oss-20b,120,1.0,1.0,1.0,1.0,1.0,10,10,10,10
+qwen3.8-27b,105,0.9,0.95,0.8833333333333334,0.9333333333333332,0.8333333333333333,10,8,10,6
+gemini-3.5-flash-lite,120,1.0,1.0,1.0,1.0,1.0,10,10,10,10
+pooled,465,0.975,0.9875,0.9708333333333334,0.9833333333333332,0.9583333333333333,10,8,10,6

@@ -1,0 +1,5 @@
+model,cells,parse_failed,parse_failed_rate,parse_retries,cost_usd
+gpt-oss-120b,960,0,0.0,1,0.3113
+gpt-oss-20b,960,0,0.0,0,0.152189
+qwen3.8-27b,960,106,0.1104,274,2.081668
+gemini-3.5-flash-lite,720,0,0.0,0,0.0

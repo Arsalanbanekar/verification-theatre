@@ -1,0 +1,9 @@
+model,type,family,failed_cells,all_failed_attempts
+gpt-oss-120b,other,other,0,1
+qwen3.8-27b,wrong key instead of reasons,wrong field name,41,150
+qwen3.8-27b,derailed at the start,other,33,98
+qwen3.8-27b,repetition loop,repetition loop,11,47
+qwen3.8-27b,invalid reason code,other,10,40
+qwen3.8-27b,reasons missing,wrong field name,9,38
+qwen3.8-27b,cut off inside the justification,truncation,2,6
+qwen3.8-27b,other,other,0,1
