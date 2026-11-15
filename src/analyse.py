@@ -575,7 +575,8 @@ def exploratory_h3(df, scope, models) -> pd.DataFrame:
         for ctype, types in TYPE_SETS.items():
             rows.append({"model_scope": scope_name, "claim_type": ctype, "hypothesis": "H3",
                          "comparison": "C1-C4 vs 50%", "measure": "share of credential mentions scored 2",
-                         "scores": EXPLORATORY, **one_sample(scope_pairs(df, scope, ms, types), 0.5, rng)})
+                         "unit": "share", "scores": EXPLORATORY,
+                         **one_sample(scope_pairs(df, scope, ms, types), 0.5, rng)})
     return pd.DataFrame(rows)
 
 
@@ -1336,6 +1337,19 @@ def git_out(*args) -> str:
         return ""
 
 
+def analysis_commit(out: Path) -> str:
+    """The commit the analysis ran at, as runner.git_commit() reports it, except that this run's own
+    outputs do not count as uncommitted changes: a re-run rewrites the tracked files in `out` before the
+    summary is stamped, which would otherwise always read -dirty."""
+    try:
+        rel = Path(out).resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        return R.git_commit()
+    head = git_out("rev-parse", "HEAD")
+    dirty = git_out("status", "--porcelain", "--untracked-files=no", "--", ".", f":(exclude){rel}")
+    return (head or "unknown") + ("-dirty" if dirty else "")
+
+
 def reasoning_settings(raw_dir: Path, models, cfg) -> tuple[str, list[str]]:
     """The reasoning setting each model actually logged, and any model that logged more than one."""
     groups, problems = {}, []
@@ -1537,7 +1551,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     notes = draft_notes(draft_text)
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
                              gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats,
-                             baseline=baseline_section(c0tab, c0, fam, models), h3x=h3x, judge=ctx["judge_model"])
+                             baseline=baseline_section(c0tab, c0, fam, models), h3x=h3x, judge=ctx["judge_model"],
+                             commit=analysis_commit(out))
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1960,19 +1975,20 @@ def baseline_section(c0tab: pd.DataFrame, c0: dict, fam: dict, models) -> list[s
 
 
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
-                   gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=(), h3x=None, judge="") -> str:
+                   gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=(), h3x=None, judge="",
+                   commit=None) -> str:
     scope_label = EXPLORATORY if source == "exploratory" else ""
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
     lines += [f"Generated {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC by `src/analyse.py` at commit "
-              f"`{R.git_commit()}` from `{raw_dir}`: {len(df)} completed cells; models "
+              f"`{commit or R.git_commit()}` from `{raw_dir}`: {len(df)} completed cells; models "
               f"{', '.join(sorted(df['model'].unique()))}. Scope-accuracy source: **{source}** ({gate_line(gate)}).", ""]
     if forced:
         lines += ["> **JUDGE RESULTS FORCED (`--scope-source judge`).** The pre-registered gate (§5, rev 3.4) has not "
                   "passed, so none of the scope-accuracy numbers below may be reported as results.", ""]
     if scope_label:
-        lines += [f"> **Scope accuracy is {EXPLORATORY_IS}.** One judge ({judge or 'the main judge'}) scored the sample. The "
+        lines += [f"> **Scope accuracy is {EXPLORATORY_IS}.** One judge, {judge or 'the main judge'}, scored the sample. The "
                   "pre-registered cross-check judge was dropped (`DEVIATIONS.md`, 15 Nov 2026), so the §5 agreement "
                   "gate cannot be evaluated: confirmatory H3 is not tested and enters Holm with p = 1. Every "
                   "scope-accuracy number below, and in the CSVs, Figure 3 and the examples, carries this label.", ""]
@@ -2060,8 +2076,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "eight tests. `primary_tests.csv` has every model and claim type.", ""]
     h3 = find(fam[("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
     if scope_label:
-        verdict = (f"Confirmatory H3: **NOT TESTED**. {h3_verdict(h3)[1]} It enters Holm with p = 1. Exploratory and "
-                   "unvalidated, on real-obscure pairs pooled over models: "
+        verdict = (f"Confirmatory H3: **NOT TESTED**, because {REASONS['no cross-check judge']}; it enters Holm with "
+                   "p = 1. Exploratory and unvalidated, on real-obscure pairs pooled over models: "
                    + h3x_sentence(h3x_row(h3x, "pooled", "real_obscure")))
     elif source == "withheld":
         verdict = f"Judge results are withheld: {withheld_text(gate or {})}"
@@ -2076,8 +2092,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
         rows_x = []
         for r in h3x.to_dict("records"):
             n = int(r["n_pairs"]) if r["n_pairs"] == r["n_pairs"] else 0
-            tail = (f"{pct(r['ci_low'])}–{pct(r['ci_high'])} | {fmt_p(r['p'])} |" if testable(r)
-                    else f"– | not testable: {why_short(r)} |")
+            tail = (f"{pct(max(0.0, r['ci_low']))}–{pct(min(1.0, r['ci_high']))} | {fmt_p(r['p'])} |" if testable(r)
+                    else f"– | not testable: {why_short(r)} |")   # a share's CI shown clipped to 0-100%, as §7 does
             rows_x.append(f"| {r['model_scope']} | {TYPE_LABEL[r['claim_type']]} | {n} | {pct(r['delta'])} | {tail}")
         lines += [f"**H3's statistic on the {scope_label} scores**, per reporting scope: the share of credential-mentioning "
                   "C1–C4 justifications scored 2, computed per pair (models weighted equally), against 50%. It is "
