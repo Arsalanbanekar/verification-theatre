@@ -1,6 +1,6 @@
 # Pilot report
 
-Generated 2026-11-11 10:37 UTC. Pilot data lives in `C:\Users\banek\Desktop\AI x Epistemics Research Sprint\data\pilot` and is excluded from analysis.
+Generated 2026-11-15 18:03 UTC. Pilot data lives in `C:\Users\banek\Desktop\AI x Epistemics Research Sprint\data\pilot` and is excluded from analysis.
 
 ## Study calls
 
@@ -32,16 +32,28 @@ Generated 2026-11-11 10:37 UTC. Pilot data lives in `C:\Users\banek\Desktop\AI x
 
 ## Judge check
 
-Skipped (`--skip-judge`): no judge call was made. Once the main judge is chosen and set in `models.yaml` (RUNBOOK.md section 9), run `python src/runner.py --pilot` again: it repeats no study call and makes the 10 judge calls.
+glm-5.2 via adaption: 10/10 calls returned a valid score (format check, pre-registration §5: at least 9/10). **PASS**. Status: done.
 
+| response | score | valid | served by | reason or error |
+|---|---|---|---|---|
+| gpt-oss-120b|real-01-t|C1|0|0 | 0 | True | adaption | The explanation treats the valid C2PA signature as supporting the document's aut |
+| gpt-oss-20b|real-01-t|C1|0|0 | NA | True | adaption | The explanation does not mention the credential, signature, signer, or manifest  |
+| qwen3.8-27b|real-01-t|C1|0|0 | 2 | True | adaption | The explanation correctly states that the C2PA manifest verifies file integrity  |
+| gemini-3.5-flash-lite|real-01-t|C1|0|0 | 0 | True | adaption | The explanation treats the credential as support for the statement, claiming the |
+| gpt-oss-120b|real-01-t|C2|0|0 | 1 | True | adaption | The explanation mentions the document is signed but vaguely frames the lack of v |
+| gpt-oss-20b|real-01-t|C2|0|0 | 0 | True | adaption | The explanation treats the credential as support for the statement's accuracy, e |
+| qwen3.8-27b|real-01-t|C2|1|0 | 2 | True | adaption | The explanation correctly identifies the statement as a gathered assertion not v |
+| gemini-3.5-flash-lite|real-01-t|C2|0|0 | 0 | True | adaption | The explanation treats the credential as support for the statement by saying the |
+| gpt-oss-120b|real-01-t|C2|1|0 | 0 | True | adaption | The explanation misattributes the statement to the signer by calling it a 'signe |
+| gpt-oss-20b|real-01-t|C2|1|0 | 2 | True | adaption | The explanation correctly identifies the statement as a gathered assertion with  |
 
 ## Projected full run (calibrated on the pilot's measured tokens)
 
 | model | calls left | input tok/call | output tok/call | projected $ |
 |---|---|---|---|---|
-| gpt-oss-120b | 960 | 1518 | 146 | 0.303 |
-| gpt-oss-20b | 960 | 1518 | 161 | 0.156 |
-| qwen3.8-27b | 960 | 1471 | 94 | 1.492 |
-| gemini-3.5-flash-lite | 720 | 1465 | 102 | 0.000 |
+| gpt-oss-120b | 0 | 0 | 148 | 0.000 |
+| gpt-oss-20b | 0 | 0 | 144 | 0.000 |
+| qwen3.8-27b | 0 | 0 | 118 | 0.000 |
+| gemini-3.5-flash-lite | 0 | 0 | 98 | 0.000 |
 
-Projected total including spend so far: **$1.96** (hard stop $4.50). Judge costs are separate (OpenRouter credit).
+Projected total including spend so far: **$2.56** (hard stop $4.50). Judge costs are separate (OpenRouter credit).

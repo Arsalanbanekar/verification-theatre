@@ -1,2 +1,3 @@
 {"run_id": "224601d17b4e", "started_utc": "2026-11-10T15:27:41.473436+00:00", "git_commit": "8e1a1d68361a9f5ba3e5089bbd3ea4f8c0395f3c", "models": ["gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b", "gemini-3.5-flash-lite"], "argv": ["--pilot"]}
 {"run_id": "bba30f121602", "started_utc": "2026-11-11T10:37:17.107672+00:00", "git_commit": "bdef5f234d6723e8a98fe17f7fdc725dbd668d4d", "models": ["gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b", "gemini-3.5-flash-lite"], "argv": ["--pilot", "--skip-judge"]}
+{"run_id": "69462325c981", "started_utc": "2026-11-15T18:03:15.829988+00:00", "git_commit": "e578ba53cf8c20397641771e5fdd888f36cd2af8", "models": ["gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b", "gemini-3.5-flash-lite"], "argv": ["--pilot"]}
