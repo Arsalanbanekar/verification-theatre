@@ -187,7 +187,7 @@ prompt never mentions that the study concerns credentials.
 - **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
 - **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
-  certifies, judged by `glm-5.2` via Adaption (temperature 0, the provider's default reasoning, blind to model, condition and truth) on a stratified sample of 570 responses; no human labels
+  certifies, judged by `glm-5.2` via Adaption (temperature 0, the provider's default reasoning, blind to model, condition and truth) on a stratified sample of 600 responses; no human labels
   are used. The pre-registered cross-check by a second judge was dropped (`DEVIATIONS.md`), so the agreement gate (judge results reported only if the two judges' linear-weighted kappa is at least 0.6) could not be evaluated: confirmatory H3 was not tested, and every scope-accuracy number is exploratory and unvalidated. Reported as the 0/1/2 distribution among justifications that mention the
   credential, plus the share that mention it, all with 95% CIs.
 
@@ -227,17 +227,17 @@ On real-obscure pairs the discrimination index was +1.7 points at C0. Averaged o
 
 **4.5 Justifications (H3; exploratory, unvalidated).** Scope accuracy by condition 
 
-Scope accuracy is exploratory and unvalidated: one judge scored it, and the pre-registered cross-check was dropped (`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. Of the 281 judged C1–C4 justifications on real-obscure pairs, 86% (95% CI 82%–90%) mentioned the credential. Of those, 5% (95% CI 2%–7%) described its scope correctly (score 2), 17% (95% CI 10%–24%) did so partially (1), and 79% (95% CI 71%–87%) treated it as support for the claim or misattributed it (0); CIs over 10 pairs. Read against the pre-registered rule, the upper bound of the 95% CI for score 2 (7%) is below 50% (one-sample t-test against 50%: p < 0.001, unadjusted, outside the Holm family); this is an exploratory, unvalidated result, not a test of H3.
+Scope accuracy is exploratory and unvalidated: one judge scored it, and the pre-registered cross-check was dropped (`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. Of the 299 judged C1–C4 justifications on real-obscure pairs, 87% (95% CI 83%–91%) mentioned the credential. Of those, 4% (95% CI 2%–7%) described its scope correctly (score 2), 18% (95% CI 12%–24%) did so partially (1), and 78% (95% CI 71%–84%) treated it as support for the claim or misattributed it (0); CIs over 10 pairs. Read against the pre-registered rule, the upper bound of the 95% CI for score 2 (7%) is below 50% (one-sample t-test against 50%: p < 0.001, unadjusted, outside the Holm family); this is an exploratory, unvalidated result, not a test of H3.
 
 **Exploratory, unvalidated** (one judge, no cross-check). Real-obscure pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
 
 | Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
 |---|---|---|---|---|---|
-| C1–C4 | 281 | 86% (82%–90%) | 79% (71%–87%) | 17% (10%–24%) | 5% (2%–7%) |
-| C1 | 68 | 80% (71%–90%) | 73% (55%–90%) | 21% (3%–39%) | 7% (0%–13%) |
-| C2 | 71 | 100% (100%–100%) | 90% (83%–97%) | 6% (0%–14%) | 4% (0%–9%) |
-| C3 | 72 | 100% (100%–100%) | 86% (74%–99%) | 12% (0%–25%) | 1% (0%–4%) |
-| C4 | 70 | 65% (55%–75%) | 39% (22%–56%) | 55% (34%–76%) | 6% (0%–13%) |
+| C1–C4 | 299 | 87% (83%–91%) | 78% (71%–84%) | 18% (12%–24%) | 4% (2%–7%) |
+| C1 | 75 | 82% (74%–90%) | 75% (63%–86%) | 19% (8%–30%) | 7% (0%–13%) |
+| C2 | 75 | 100% (100%–100%) | 88% (80%–95%) | 8% (0%–17%) | 4% (0%–9%) |
+| C3 | 75 | 100% (100%–100%) | 85% (73%–97%) | 14% (2%–26%) | 1% (0%–4%) |
+| C4 | 74 | 67% (58%–76%) | 39% (23%–55%) | 55% (35%–76%) | 6% (0%–13%) |
 
 . Credential-citation rate
 
@@ -257,6 +257,7 @@ signer (quote the model output verbatim, briefly).
 **4.6 Unrecognised sources (H5).** C1 vs C0 on invented items: −2.6 points (95% CI −13.9 to +8.7; p = 0.516, unadjusted; 4 pairs, 6 dropped at the C0 ceiling); full sample: −5.4 points (95% CI −10.4 to −0.4; p = 0.038, unadjusted; 10 pairs); H5 is exploratory. No: on claims about organisations the models did not recognise, the credential lowered acceptance by 5.4 points in the full sample, against −15.0 points for claims about real organisations (difference +9.6 points; 95% CI +2.7 to +16.5; p = 0.009, exploratory, full sample); with the C0-ceiling rule the comparison was not testable, because on real-obscure pairs only 2 pairs were left after 8 at the C0 ceiling were dropped, with differences of −29.2 and −16.7 points.
 
 **4.7 Countermeasure (H4).** Interpreter vs none on C1/C2: interpreter − none = −42.8 points (95% CI −51.6 to −34.1; p_holm < 0.001; 20 pairs), across the three interpreter-arm models; without the interpreter, their C1/C2 acceptance was −10.8 points relative to C0. qwen3.8-27b's interpreter arm had twice the parse-failure rate of the same conditions without it (15.8% vs 7.9%), so its own H4 result (interpreter − none = −37.7 points, 95% CI −50.1 to −25.3) carries that caveat.
+Exploratory, added after the results were seen (`DEVIATIONS.md`): with the interpreter, acceptance on C1 and C2 went from 85% to 44% for true claims and from 87% to 42% for false ones, and the discrimination index from −1.5 to +1.4 points, a change of +2.9 points (95% CI −2.6 to +8.4; p = 0.283, unadjusted; 20 pairs). So it lowered acceptance of true and false claims alike, without a reliable gain in accuracy.
 
 **4.8 Models.** Per-model table. 120B vs 20B.
 

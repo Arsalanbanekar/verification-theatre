@@ -6,7 +6,7 @@ Read each one before quoting it: a score of 0 also covers 'treats the credential
 
 ## Score 0 in C2 (statement only gathered, not attributed to the signer)
 
-126 in total; the first 6 by response id:
+132 in total; the first 6 by response id:
 
 - `gemini-3.5-flash-lite|inv-01-f|C2|0|0` (invented, false claim, accept=true): "The document contains a cryptographically verified C2PA manifest from Vellumworth Document Services Ltd confirming the authenticity and integrity of the statement regarding Saltinghurst Town Council's grant."
 - `gemini-3.5-flash-lite|inv-01-t|C2|0|0` (invented, true claim, accept=true): "The document contains a valid cryptographic signature and C2PA manifest issued by Vellumworth Document Services Ltd, verifying that the statement originated from a trusted publisher and has not been tampered with."

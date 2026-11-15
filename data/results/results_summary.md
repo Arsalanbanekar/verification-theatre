@@ -1,6 +1,6 @@
 # Results summary
 
-Generated 2026-11-15 18:53 UTC by `src/analyse.py` at commit `e2c2789f1b5dc915be21d5d1e0d480a109924852` from `C:\Users\banek\Desktop\AI x Epistemics Research Sprint\data\raw`: 3600 completed cells; models gemini-3.5-flash-lite, gpt-oss-120b, gpt-oss-20b, qwen3.8-27b. Scope-accuracy source: **exploratory** (no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be evaluated: the main judge's scores are exploratory and unvalidated, and confirmatory H3 is not tested).
+Generated 2026-11-15 19:26 UTC by `src/analyse.py` at commit `36898c04cc850817b20e1790d0c0c940a927da62` from `C:\Users\banek\Desktop\AI x Epistemics Research Sprint\data\raw`: 3600 completed cells; models gemini-3.5-flash-lite, gpt-oss-120b, gpt-oss-20b, qwen3.8-27b. Scope-accuracy source: **exploratory** (no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be evaluated: the main judge's scores are exploratory and unvalidated, and confirmatory H3 is not tested).
 
 > **Scope accuracy is exploratory and unvalidated.** One judge, `glm-5.2` via Adaption (temperature 0, the provider's default reasoning, blind to model, condition and truth), scored the sample. The pre-registered cross-check judge was dropped (`DEVIATIONS.md`, 15 Nov 2026), so the §5 agreement gate cannot be evaluated: confirmatory H3 is not tested and enters Holm with p = 1. Every scope-accuracy number below, and in the CSVs, Figure 3 and the examples, carries this label.
 
@@ -118,7 +118,7 @@ Line 192 (3.4 Measures)
 
 Line 192 (3.4 Measures)
 
-570
+600
 
 ### 12. `{KAPPA}`
 
@@ -190,17 +190,17 @@ On real-obscure pairs the discrimination index was +1.7 points at C0. Averaged o
 
 Line 230 (4. Results — written during the sprint)
 
-Scope accuracy is exploratory and unvalidated: one judge scored it, and the pre-registered cross-check was dropped (`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. Of the 281 judged C1–C4 justifications on real-obscure pairs, 86% (95% CI 82%–90%) mentioned the credential. Of those, 5% (95% CI 2%–7%) described its scope correctly (score 2), 17% (95% CI 10%–24%) did so partially (1), and 79% (95% CI 71%–87%) treated it as support for the claim or misattributed it (0); CIs over 10 pairs. Read against the pre-registered rule, the upper bound of the 95% CI for score 2 (7%) is below 50% (one-sample t-test against 50%: p < 0.001, unadjusted, outside the Holm family); this is an exploratory, unvalidated result, not a test of H3.
+Scope accuracy is exploratory and unvalidated: one judge scored it, and the pre-registered cross-check was dropped (`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. Of the 299 judged C1–C4 justifications on real-obscure pairs, 87% (95% CI 83%–91%) mentioned the credential. Of those, 4% (95% CI 2%–7%) described its scope correctly (score 2), 18% (95% CI 12%–24%) did so partially (1), and 78% (95% CI 71%–84%) treated it as support for the claim or misattributed it (0); CIs over 10 pairs. Read against the pre-registered rule, the upper bound of the 95% CI for score 2 (7%) is below 50% (one-sample t-test against 50%: p < 0.001, unadjusted, outside the Holm family); this is an exploratory, unvalidated result, not a test of H3.
 
 **Exploratory, unvalidated** (one judge, no cross-check). Real-obscure pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
 
 | Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
 |---|---|---|---|---|---|
-| C1–C4 | 281 | 86% (82%–90%) | 79% (71%–87%) | 17% (10%–24%) | 5% (2%–7%) |
-| C1 | 68 | 80% (71%–90%) | 73% (55%–90%) | 21% (3%–39%) | 7% (0%–13%) |
-| C2 | 71 | 100% (100%–100%) | 90% (83%–97%) | 6% (0%–14%) | 4% (0%–9%) |
-| C3 | 72 | 100% (100%–100%) | 86% (74%–99%) | 12% (0%–25%) | 1% (0%–4%) |
-| C4 | 70 | 65% (55%–75%) | 39% (22%–56%) | 55% (34%–76%) | 6% (0%–13%) |
+| C1–C4 | 299 | 87% (83%–91%) | 78% (71%–84%) | 18% (12%–24%) | 4% (2%–7%) |
+| C1 | 75 | 82% (74%–90%) | 75% (63%–86%) | 19% (8%–30%) | 7% (0%–13%) |
+| C2 | 75 | 100% (100%–100%) | 88% (80%–95%) | 8% (0%–17%) | 4% (0%–9%) |
+| C3 | 75 | 100% (100%–100%) | 85% (73%–97%) | 14% (2%–26%) | 1% (0%–4%) |
+| C4 | 74 | 67% (58%–76%) | 39% (23%–55%) | 55% (35%–76%) | 6% (0%–13%) |
 
 ### 24. `{table}`
 
@@ -233,15 +233,21 @@ Line 237 (4. Results — written during the sprint)
 
 interpreter − none = −42.8 points (95% CI −51.6 to −34.1; p_holm < 0.001; 20 pairs), across the three interpreter-arm models; without the interpreter, their C1/C2 acceptance was −10.8 points relative to C0. qwen3.8-27b's interpreter arm had twice the parse-failure rate of the same conditions without it (15.8% vs 7.9%), so its own H4 result (interpreter − none = −37.7 points, 95% CI −50.1 to −25.3) carries that caveat
 
-### 28. `{N}`
+### 28. `{INTERPRETER ACCURACY: exploratory, one sentence: did the interpreter improve discrimina…}`
 
-Line 257 (Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required))
+Line 238 (4. Results — written during the sprint)
+
+Exploratory, added after the results were seen (`DEVIATIONS.md`): with the interpreter, acceptance on C1 and C2 went from 85% to 44% for true claims and from 87% to 42% for false ones, and the discrimination index from −1.5 to +1.4 points, a change of +2.9 points (95% CI −2.6 to +8.4; p = 0.283, unadjusted; 20 pairs). So it lowered acceptance of true and false claims alike, without a reliable gain in accuracy.
+
+### 29. `{N}`
+
+Line 259 (Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required))
 
 four
 
-### 29. `{BASELINE CEILING}`
+### 30. `{BASELINE CEILING}`
 
-Line 267 (Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required))
+Line 269 (Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required))
 
 Without a credential, the models accepted almost all claims, true and false alike: pooled over models, 99% of true and 97% of false real-obscure claims, 98% and 96% invented; gpt-oss-120b, gpt-oss-20b and gemini-3.5-flash-lite accepted every C0 response; qwen3.8-27b 90%. In the pooled analysis 8 of 10 real-obscure pairs were at the C0 ceiling, with both versions accepted in every C0 response; on such pairs a credential can only leave acceptance unchanged or lower it. The pre-registered inflation tests drop those pairs, which left the H1 and H2 tests on real-obscure pairs not testable; the full-sample results reported beside them are the informative ones.
 
@@ -328,8 +334,8 @@ Rule (§7, rev 3.3): H3 is supported only if the upper bound of the 95% CI for t
 
 | Scope | Pairs | n pairs | share scored 2 | 95% CI | p vs 50% (unadjusted) |
 |---|---|---|---|---|---|
-| pooled | all pairs | 20 | 4% | 2%–6% | < 0.001 |
-| pooled | real-obscure | 10 | 5% | 2%–7% | < 0.001 |
+| pooled | all pairs | 20 | 4% | 2%–5% | < 0.001 |
+| pooled | real-obscure | 10 | 4% | 2%–7% | < 0.001 |
 | pooled | invented | 10 | 3% | 1%–6% | < 0.001 |
 | gpt-oss-120b | all pairs | 20 | 0% | – | not testable: zero variance: all 20 pairs 0% |
 | gpt-oss-120b | real-obscure | 10 | 0% | – | not testable: zero variance: all 10 pairs 0% |
@@ -337,42 +343,42 @@ Rule (§7, rev 3.3): H3 is supported only if the upper bound of the 95% CI for t
 | gpt-oss-20b | all pairs | 20 | 0% | – | not testable: zero variance: all 20 pairs 0% |
 | gpt-oss-20b | real-obscure | 10 | 0% | – | not testable: zero variance: all 10 pairs 0% |
 | gpt-oss-20b | invented | 10 | 0% | – | not testable: zero variance: all 10 pairs 0% |
-| qwen3.8-27b | all pairs | 20 | 13% | 7%–20% | < 0.001 |
-| qwen3.8-27b | real-obscure | 10 | 17% | 7%–26% | < 0.001 |
-| qwen3.8-27b | invented | 10 | 10% | 0%–20% | < 0.001 |
+| qwen3.8-27b | all pairs | 20 | 12% | 6%–18% | < 0.001 |
+| qwen3.8-27b | real-obscure | 10 | 15% | 7%–23% | < 0.001 |
+| qwen3.8-27b | invented | 10 | 9% | 0%–19% | < 0.001 |
 | gemini-3.5-flash-lite | all pairs | 20 | 3% | 0%–6% | < 0.001 |
-| gemini-3.5-flash-lite | real-obscure | 10 | 2% | 0%–7% | < 0.001 |
+| gemini-3.5-flash-lite | real-obscure | 10 | 2% | 0%–5% | < 0.001 |
 | gemini-3.5-flash-lite | invented | 10 | 4% | 0%–9% | < 0.001 |
 
 **Exploratory, unvalidated** (one judge, no cross-check). Real-obscure pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
 
 | Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
 |---|---|---|---|---|---|
-| C1–C4 | 281 | 86% (82%–90%) | 79% (71%–87%) | 17% (10%–24%) | 5% (2%–7%) |
-| C1 | 68 | 80% (71%–90%) | 73% (55%–90%) | 21% (3%–39%) | 7% (0%–13%) |
-| C2 | 71 | 100% (100%–100%) | 90% (83%–97%) | 6% (0%–14%) | 4% (0%–9%) |
-| C3 | 72 | 100% (100%–100%) | 86% (74%–99%) | 12% (0%–25%) | 1% (0%–4%) |
-| C4 | 70 | 65% (55%–75%) | 39% (22%–56%) | 55% (34%–76%) | 6% (0%–13%) |
+| C1–C4 | 299 | 87% (83%–91%) | 78% (71%–84%) | 18% (12%–24%) | 4% (2%–7%) |
+| C1 | 75 | 82% (74%–90%) | 75% (63%–86%) | 19% (8%–30%) | 7% (0%–13%) |
+| C2 | 75 | 100% (100%–100%) | 88% (80%–95%) | 8% (0%–17%) | 4% (0%–9%) |
+| C3 | 75 | 100% (100%–100%) | 85% (73%–97%) | 14% (2%–26%) | 1% (0%–4%) |
+| C4 | 74 | 67% (58%–76%) | 39% (23%–55%) | 55% (35%–76%) | 6% (0%–13%) |
 
 **Exploratory, unvalidated** (one judge, no cross-check). Invented pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
 
 | Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
 |---|---|---|---|---|---|
-| C1–C4 | 289 | 90% (86%–93%) | 82% (78%–87%) | 14% (11%–17%) | 3% (1%–6%) |
-| C1 | 75 | 87% (78%–96%) | 89% (80%–98%) | 9% (0%–19%) | 2% (0%–4%) |
-| C2 | 70 | 100% (100%–100%) | 92% (83%–100%) | 6% (0%–12%) | 2% (0%–5%) |
-| C3 | 71 | 100% (100%–100%) | 84% (71%–97%) | 16% (3%–29%) | 0% (0%–0%) |
-| C4 | 73 | 70% (63%–76%) | 53% (39%–67%) | 37% (22%–52%) | 10% (2%–19%) |
+| C1–C4 | 301 | 90% (86%–93%) | 81% (78%–85%) | 15% (12%–19%) | 3% (1%–6%) |
+| C1 | 76 | 87% (78%–96%) | 89% (80%–98%) | 9% (0%–19%) | 2% (0%–4%) |
+| C2 | 74 | 100% (100%–100%) | 92% (83%–100%) | 6% (0%–12%) | 2% (0%–5%) |
+| C3 | 76 | 100% (100%–100%) | 80% (66%–94%) | 20% (6%–34%) | 0% (0%–0%) |
+| C4 | 75 | 70% (63%–77%) | 50% (38%–63%) | 39% (25%–54%) | 10% (2%–19%) |
 
 **Exploratory, unvalidated** (one judge, no cross-check). All pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
 
 | Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
 |---|---|---|---|---|---|
-| C1–C4 | 570 | 88% (85%–90%) | 81% (77%–85%) | 15% (12%–19%) | 4% (2%–6%) |
-| C1 | 143 | 84% (78%–90%) | 81% (71%–90%) | 15% (6%–25%) | 4% (1%–8%) |
-| C2 | 141 | 100% (100%–100%) | 91% (86%–97%) | 6% (1%–10%) | 3% (0%–6%) |
-| C3 | 143 | 100% (100%–100%) | 85% (77%–93%) | 14% (6%–22%) | 1% (0%–2%) |
-| C4 | 143 | 67% (62%–73%) | 46% (35%–56%) | 46% (34%–59%) | 8% (3%–13%) |
+| C1–C4 | 600 | 88% (86%–91%) | 80% (76%–83%) | 17% (14%–20%) | 4% (2%–5%) |
+| C1 | 151 | 85% (79%–90%) | 82% (74%–89%) | 14% (7%–21%) | 4% (1%–8%) |
+| C2 | 149 | 100% (100%–100%) | 90% (84%–95%) | 7% (3%–12%) | 3% (0%–6%) |
+| C3 | 151 | 100% (100%–100%) | 83% (74%–91%) | 17% (8%–25%) | 1% (0%–2%) |
+| C4 | 149 | 68% (63%–74%) | 45% (35%–54%) | 47% (35%–59%) | 8% (3%–13%) |
 
 Per model: `scope_distribution.csv`. Figure 3 shows raw shares of all judged justifications, including those that do not mention the credential; it is exploratory and unvalidated too.
 
@@ -382,6 +388,27 @@ Interpreter vs none on C1 and C2, all pairs. Pooled over the interpreter-arm mod
 
 - qwen3.8-27b's interpreter arm had twice the parse-failure rate of the same conditions without it (15.8% vs 7.9%), so its own H4 result (interpreter − none = −37.7 points, 95% CI −50.1 to −25.3) carries that caveat.
 
+### Exploratory: accuracy or only acceptance?
+
+**Exploratory, added after the results were seen (`DEVIATIONS.md`, 16 Nov 2026).** The discrimination index (acceptance of the true twin minus the false twin) on C1 and C2, with and without the interpreter, beside the acceptance of true and false claims it comes from. Each value is the C1/C2 mean, in points. The change is with minus without, a paired t-test over pairs. It is outside the Holm family, so p is unadjusted (`interpreter_discrimination.csv`, which also has C1 and C2 apart).
+
+Exploratory, added after the results were seen (`DEVIATIONS.md`): with the interpreter, acceptance on C1 and C2 went from 85% to 44% for true claims and from 87% to 42% for false ones, and the discrimination index from −1.5 to +1.4 points, a change of +2.9 points (95% CI −2.6 to +8.4; p = 0.283, unadjusted; 20 pairs). So it lowered acceptance of true and false claims alike, without a reliable gain in accuracy.
+
+| Scope | Pairs | n | discrimination without → with | change (95% CI) | p (unadjusted) | true accepted without → with | false accepted without → with |
+|---|---|---|---|---|---|---|---|
+| pooled | all pairs | 20 | −1.5 → +1.4 | +2.9 (−2.6 to +8.4) | 0.283 | 85% → 44% | 87% → 42% |
+| pooled | real-obscure | 10 | −2.2 → +1.7 | +3.9 (−4.8 to +12.6) | 0.338 | 81% → 36% | 83% → 34% |
+| pooled | invented | 10 | −0.8 → +1.1 | +1.9 (−6.6 to +10.5) | 0.621 | 89% → 51% | 90% → 50% |
+| gpt-oss-120b | all pairs | 20 | −1.7 → +0.8 | +2.5 (−4.8 to +9.8) | 0.481 | 98% → 56% | 100% → 55% |
+| gpt-oss-120b | real-obscure | 10 | −3.3 → +5.0 | +8.3 (−1.8 to +18.5) | 0.096 | 97% → 52% | 100% → 47% |
+| gpt-oss-120b | invented | 10 | 0.0 → −3.3 | −3.3 (−14.3 to +7.6) | 0.509 | 100% → 60% | 100% → 63% |
+| gpt-oss-20b | all pairs | 20 | −1.7 → +2.5 | +4.2 (−9.4 to +17.8) | 0.529 | 88% → 43% | 90% → 41% |
+| gpt-oss-20b | real-obscure | 10 | −1.7 → +8.3 | +10.0 (−17.6 to +37.6) | 0.434 | 82% → 33% | 83% → 25% |
+| gpt-oss-20b | invented | 10 | −1.7 → −3.3 | −1.7 (−12.1 to +8.8) | 0.726 | 95% → 53% | 97% → 57% |
+| qwen3.8-27b | all pairs | 20 | −1.2 → +0.8 | +2.1 (−12.6 to +16.7) | 0.769 | 69% → 32% | 70% → 31% |
+| qwen3.8-27b | real-obscure | 10 | −1.7 → −8.3 | −6.7 (−27.1 to +13.8) | 0.479 | 64% → 23% | 66% → 32% |
+| qwen3.8-27b | invented | 10 | −0.8 → +10.0 | +10.8 (−12.7 to +34.4) | 0.325 | 73% → 41% | 74% → 31% |
+
 ## Per model
 
 Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs. Each H1 and H2 cell gives the pre-registered test (C0-ceiling pairs dropped in that model's own scope), then, after the slash, the full-sample result. n/t: not testable (fewer than 3 pairs, or the same difference in every pair); n/a: no data by design (gemini-3.5-flash-lite has no interpreter arm).
@@ -390,7 +417,7 @@ Differences in points; H1, H2 and H2b on real-obscure pairs, H4 on all pairs. Ea
 |---|---|---|---|---|---|---|---|---|---|---|
 | gpt-oss-120b | 960 | 100% | n/t / 0.0 | n/t / +1.7 | n/t / 0.0 | +6.7 | −43.8 | 0% | 0.0% | 0.31 |
 | gpt-oss-20b | 960 | 100% | n/t / −28.3 | n/t / +3.3 | n/t / +3.3 | +10.0 | −47.1 | 0% | 0.0% | 0.15 |
-| qwen3.8-27b | 960 | 90% | n/t / −26.7 | n/t / +7.5 | n/t / −42.5 | +1.7 | −37.7 | 13% | 11.0% | 2.08 |
+| qwen3.8-27b | 960 | 90% | n/t / −26.7 | n/t / +7.5 | n/t / −42.5 | +1.7 | −37.7 | 11% | 11.0% | 2.08 |
 | gemini-3.5-flash-lite | 720 | 100% | n/t / −5.0 | n/t / 0.0 | n/t / −11.7 | +90.0 | n/a | 2% | 0.0% | 0.00 |
 
 **Scale within family (§6).** Share of credential mentions scored 2 (exploratory, unvalidated): 0% for gpt-oss-120b vs 0% for gpt-oss-20b. C1 − C0 on real-obscure pairs, pre-registered test / full sample: n/t / 0.0 vs n/t / −28.3 points.
