@@ -63,13 +63,12 @@ models:
     price_usd_per_mtok: {input: 0.0, output: 0.0}   # free tier
     generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
 
-# Scope-accuracy judges (§5, rev 3.4). Not study models; never shown the model, condition label or
-# truth value. Planned on OpenRouter; from 15 Nov 2026 the main judge runs on Adaption (sponsor
-# credits; DEVIATIONS.md). Each model ID, family and serving provider is chosen before any main-data
-# judging and committed here before judging starts; the judges refuse to run while model_id is empty
-# or breaks the §5 criteria: not OpenAI/gpt-oss, Qwen/Alibaba or Google; no router, unnamed model or
-# Adaption stack; on OpenRouter the main judge paid (no :free), the cross-check :free and from a
-# third family.
+# Scope-accuracy judge (§5, rev 3.4). Not a study model; never shown the model, condition label or
+# truth value. Planned as two OpenRouter judges; from 15 Nov 2026 one judge on Adaption (sponsor
+# credits) and no cross-check (DEVIATIONS.md). Its model ID, family and serving provider are chosen
+# before any main-data judging and committed here before judging starts; it refuses to run while
+# model_id is empty or breaks the §5 criteria: not OpenAI/gpt-oss, Qwen/Alibaba or Google; no router,
+# unnamed model or Adaption stack.
 judges:
   main:
     provider: adaption           # Adaption Responses API via the `adaption` SDK (ADAPTION_API_KEY in .env)
@@ -87,20 +86,8 @@ judges:
     request_timeout_s: 180
     sample_size: 600
     seed: 20261113               # draws the stratified sample
+  # The cross-check judge (§5) was dropped: no second judge, so the kappa gate cannot be evaluated,
+  # confirmatory H3 is not tested (Holm p = 1), and the main judge's scores are exploratory and
+  # unvalidated. grade.py --crosscheck refuses, and analyse.py reports the scope source "exploratory".
   crosscheck:
-    provider: openrouter
-    model_id:                    # a :free model from a third family, e.g. <author>/<model>:free
-    family:
-    route: {order: [], allow_fallbacks: false, require_parameters: true}
-    temperature: 0.0
-    reasoning:
-    json_mode: json_schema
-    max_output_tokens: 4000
-    concurrency: 2
-    # Free models: 20 requests a minute, 50 a day under 10 credits bought (OpenRouter, per UTC day).
-    # rpd is a hard stop per UTC day, counting every attempt, failed ones included.
-    limits: {rpm: 15, rpd: 48}
-    budget_usd: 0.0              # a :free model costs nothing; any charge stops it
-    request_timeout_s: 180
-    sample_size: 100             # a subset of the main judge's sample, stratified the same way
-    seed: 20261114
+    dropped: "15 Nov 2026, by the author's decision; see DEVIATIONS.md"

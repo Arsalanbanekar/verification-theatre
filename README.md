@@ -54,8 +54,10 @@ The git history dates every file.
   code at tag `pre-sprint`. The first and last collection times are given in
   `data/results/results_summary.md` and in the report.
   - Same code for every study call (checked 15 November): the four runs in `data/logs/runs.jsonl` ran at `fee706c` (tag `pre-sprint`), `420fc69` and `420fc69-dirty` (one Gemini cell; the uncommitted edits were to analysis and documentation files), `src/build_documents.py`, `src/prompt_text.py`, `src/output_schema.py`, `src/runner.py`, `src/providers/`, `corpus/` and the study-model blocks of `models.yaml` are identical at all three, and all 3,875 logged requests match a rebuild from `fee706c`.
-- **Judging**: the two judges are chosen, the pilot's judge check runs, then the judges score
-  the main data (`data/graded/`).
+- **Judging**: one judge, glm-5.2 on Adaption, chosen and committed before any main-data
+  judging; the pilot's judge check runs, then it scores the main data (`data/graded/`). It
+  replaces the two pre-registered OpenRouter judges, and the cross-check is dropped
+  (`DEVIATIONS.md`, 15 November), so the scope-accuracy scores are exploratory and unvalidated.
 - **Analysis** (`data/results/`) **and the write-up.**
 
 On 13 November, before any of this, timing statements were corrected:
@@ -81,10 +83,10 @@ Any later change to the code or protocol is listed in `DEVIATIONS.md`.
 | `corpus/*_probe.json` | Closed-book corpus probes run on a model outside the study |
 | `corpus/conditions/` | Condition templates C0–C5 and the shared signer |
 | `corpus/rendered_examples/` | Exact prompts for two claims |
-| `models.yaml` | Models, limits, prices, budget and the two judges |
+| `models.yaml` | Models, limits, prices, budget and the judge |
 | `src/build_documents.py`, `src/prompt_text.py` | The exact prompt for each claim and condition |
-| `src/runner.py`, `src/providers/` | Resumable, rate-limited study calls (Groq, Gemini) and judge calls (OpenRouter); pilot; dry run |
-| `src/judge.py`, `src/grade.py` | Metrics, the two blind scope-accuracy judges, their agreement (kappa) |
+| `src/runner.py`, `src/providers/` | Resumable, rate-limited study calls (Groq, Gemini) and judge calls (Adaption; OpenRouter as planned); pilot; dry run |
+| `src/judge.py`, `src/grade.py` | Metrics, the blind scope-accuracy judge, and the agreement (kappa) code for the dropped cross-check |
 | `src/analyse.py` | Pre-registered tests, figures, results summary |
 | `src/synthetic.py` | Fake data for tests and rehearsal |
 | `tests/` | Offline tests |

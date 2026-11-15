@@ -189,11 +189,9 @@ prompt never mentions that the study concerns credentials.
 - **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
 - **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
-  certifies, judged by {JUDGE MODEL} on a stratified sample of {N} responses. A free model from
-  another family scored 100 of them with the same prompt; agreement between the two judges:
-  {KAPPA}. Judge results are reported only if the overall weighted kappa is at least 0.6; no
-  human labels are used. Reported as the 0/1/2 distribution among justifications that mention
-  the credential, plus the share that mention it, all with 95% CIs.
+  certifies, judged by {JUDGE MODEL} on a stratified sample of {N} responses; no human labels
+  are used. {KAPPA} Reported as the 0/1/2 distribution among justifications that mention the
+  credential, plus the share that mention it, all with 95% CIs.
 
 ### 3.5 Analysis
 
@@ -207,6 +205,9 @@ is reported alongside. Claim type enters as a factor throughout. One rule was ad
 collection (`DEVIATIONS.md`): a test with fewer than three pairs, or with the same difference in
 every pair, is reported as not testable, without a p-value, and enters the Holm family with
 p = 1; where a pre-registered test is not testable, the full-sample result is the informative one.
+The pre-registered cross-check judge was dropped (`DEVIATIONS.md`), so H3 was not tested and
+entered the Holm family with p = 1; its statistic on the one judge's scores is reported as
+exploratory and unvalidated.
 
 ---
 
@@ -226,7 +227,7 @@ C1 vs C0 on false claims: {Δ, CI, p_holm}.
 **4.4 Inflation without discrimination (H2b).** Figure 2: discrimination index by condition.
 {Did the index stay flat across C0–C4 and rise at C5?}
 
-**4.5 Justifications (H3).** Scope accuracy by condition {table}. Credential-citation rate
+**4.5 Justifications (H3; exploratory, unvalidated).** Scope accuracy by condition {table}. Credential-citation rate
 {table}. Example justifications: one correct, one misattributing a gathered assertion to the
 signer (quote the model output verbatim, briefly).
 
@@ -251,7 +252,7 @@ Structure (one paragraph each):
 
 ---
 
-## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft, baseline-ceiling bullet added during the sprint; required)
+## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required)
 
 **What this study establishes.** Within single-turn evaluations of {N} open-weight and small
 proprietary models, how acceptance and confidence in a fixed claim change when a credential is
@@ -266,9 +267,10 @@ attached, and whether models distinguish credentials that license different infe
 - Whether a credential raises belief in a claim a model doubts without one. {BASELINE CEILING}
 - Invented organisations are detectable by non-recognition (§3.1); the invented half therefore
   measures how credentials interact with unknown sources, not uncheckable facts.
-- Scope accuracy relies on LLM judges, with no human labels. Agreement between two judges from
-  different families shows that the rubric was applied consistently, not that it was applied
-  correctly.
+- Scope accuracy rests on a single LLM judge (glm-5.2), with no human labels. The pre-registered
+  cross-check by a second judge was dropped (`DEVIATIONS.md`), so neither the consistency nor the
+  correctness of its scoring was checked: the scope-accuracy scores are exploratory and
+  unvalidated, and confirmatory H3 was not tested.
 - Listing credential-related reasons in every condition may increase attention to credentials;
   this is constant across conditions and cannot explain differences between them.
 

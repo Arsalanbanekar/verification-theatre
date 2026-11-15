@@ -1,9 +1,12 @@
-"""Grading: deterministic metrics and the two scope-accuracy judges (PREREGISTRATION.md §5, rev 3.4).
+"""Grading: deterministic metrics and the scope-accuracy judge (PREREGISTRATION.md §5, rev 3.4).
 
   python src/grade.py                  deterministic metrics -> data/graded/responses.csv
   python src/grade.py --judge          main judge on the stratified C1-C4 sample of 600 (concurrent, resumable)
   python src/grade.py --crosscheck     free cross-check judge on 100 of those (at most 48 calls a UTC day)
   python src/grade.py --agreement      weighted kappa between the two judges; no API calls
+
+Since 15 Nov 2026 (DEVIATIONS.md) the main judge is glm-5.2 on Adaption and the cross-check judge is
+dropped: --crosscheck refuses, and the agreement gate reports "unevaluable".
 
 Reads data/raw only; pilot data is never graded. Raw files are never modified. Judgements go to
 data/graded/judge_main.jsonl and judge_crosscheck.jsonl, and every HTTP attempt to the matching
@@ -276,6 +279,8 @@ def run_judge(cfg, graded_dir: Path, role: str = "main", limit=None, force=False
         say(f"Stopped: {s['stop_reason']}. Re-run the same command to continue; judged responses are kept.")
     elif s["remaining"] == 0:
         say(f"Every response in the {LABEL[role]}'s sample is judged.")
+    if role == "main" and J.crosscheck_dropped(cfg):
+        say(UNEVALUABLE.format(why=J.crosscheck_dropped(cfg)))
     report_agreement(cfg, graded_dir, say, quiet_if_none=True)
     return 0 if s["stop_kind"] in (None, "day") else 1
 
@@ -321,7 +326,9 @@ def agreement(pairs) -> dict:
 def judge_agreement(cfg: dict, graded_dir: Path) -> dict:
     """Weighted kappa between the two judges on the cross-check sample, overall and per study-model
     family, and the §5 gate: "passed" (kappa >= 0.6), "failed", "pending" (the cross-check, or the
-    main judge on the same responses, is unfinished) or "none" (no main-judge scores)."""
+    main judge on the same responses, is unfinished), "unevaluable" (the cross-check judge was
+    dropped: DEVIATIONS.md, 15 Nov 2026) or "none" (no main-judge scores). Synthetic rehearsal rows
+    carry no judge model ID and still count, so the rehearsal keeps exercising the agreement code."""
     graded_dir = Path(graded_dir)
     main, cross = judge_rows(graded_dir, "main", cfg), judge_rows(graded_dir, "crosscheck", cfg)
     path = graded_dir / "crosscheck_sample.csv"
@@ -336,13 +343,19 @@ def judge_agreement(cfg: dict, graded_dir: Path) -> dict:
     overall = agreement(pairs)
     kappa = overall["weighted_kappa_linear"]
     complete = bool(ids) and all(i in main and i in cross for i in ids)
-    status = ("none" if not main else "pending" if not complete
+    dropped = J.crosscheck_dropped(cfg)
+    status = ("none" if not main else "unevaluable" if dropped and not cross else "pending" if not complete
               else "passed" if kappa == kappa and kappa >= KAPPA_THRESHOLD else "failed")
     return {"main_model": J.judge_config(cfg, "main").get("model_id"),
-            "crosscheck_model": J.judge_config(cfg, "crosscheck").get("model_id"),
+            "crosscheck_model": J.judge_config(cfg, "crosscheck").get("model_id"), "crosscheck_dropped": dropped,
             "threshold": KAPPA_THRESHOLD, "status": status, "kappa": kappa, "complete": complete,
             "n_sample": len(ids), "n_crosschecked": sum(1 for i in ids if i in cross), "n_main_judged": len(main),
             "overall": overall, "by_family": {f: agreement(p) for f, p in sorted(fams.items())}}
+
+
+UNEVALUABLE = ("No cross-check judge: it was dropped ({why}). The §5 gate cannot be evaluated, so confirmatory H3 is "
+               "not tested (Holm p = 1) and the main judge's scope-accuracy scores are reported as exploratory and "
+               "unvalidated.")
 
 
 def _two(v) -> str:
@@ -356,6 +369,9 @@ def report_agreement(cfg: dict, graded_dir: Path, say=print, quiet_if_none=False
         return a
     graded_dir.mkdir(parents=True, exist_ok=True)
     (graded_dir / "judge_agreement.json").write_text(json.dumps(a, indent=1), encoding="utf-8", newline="\n")
+    if a["status"] == "unevaluable":
+        say(UNEVALUABLE.format(why=a["crosscheck_dropped"]))
+        return a
     o = a["overall"]
     say(f"Judges' agreement on the cross-check sample ({a['n_crosschecked']} of {a['n_sample']} cross-checked): "
         f"weighted kappa (linear, responses both scored 0-2) {_two(o['weighted_kappa_linear'])} "
@@ -384,7 +400,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pilot-dir", type=Path, default=DATA / "pilot")
     ap.add_argument("--judge", action="store_true", help="main judge on the stratified sample (concurrent, resumable)")
     ap.add_argument("--crosscheck", action="store_true",
-                    help="free cross-check judge on 100 of the sample (at most 48 calls a UTC day; resumable)")
+                    help="free cross-check judge on 100 of the sample (at most 48 calls a UTC day; resumable); "
+                         "dropped on 15 Nov 2026 (DEVIATIONS.md), so it refuses while models.yaml says so")
     ap.add_argument("--agreement", action="store_true", help="weighted kappa between the two judges; no API calls")
     ap.add_argument("--limit", type=int, help="at most this many responses judged in this run")
     ap.add_argument("--force", action="store_true",

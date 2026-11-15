@@ -31,3 +31,27 @@ with its date, time and reason.
      - one sentence on this correction in the report's §3.5.
 
   The exploratory robustness checks (01:51 entry) re-run the same procedure, so they use the guard too. No model or judge call was made for this change, and `data/raw/` was not touched.
+- 15 Nov 2026, 23:36 IST: the judge changed before any main-data judging (pre-registration §5, rev 3.4), by the author's decision.
+  1. **Provider: OpenRouter → Adaption**, paid from sponsor credits (`ADAPTION_API_KEY`, Python SDK `adaption`, `src/providers/adaption.py`). §5 planned a paid OpenRouter model pinned to one serving provider; Adaption serves its hosted models itself.
+  2. **Main judge: `glm-5.2`** (Z.ai), which `client.models.list()` listed on 15 Nov. The author chose it by the §5 criteria:
+     - Adaption lists seven models. Four are excluded as Qwen/Alibaba or Google (qwen3.5-397b, qwen3.8-27b, gemma-4-26b-a4b-it, gemma-4-31b-it). That leaves glm-5.2 and two "Flash" variants (glm-5.3-flash, deepseek-v4-flash).
+     - glm-5.2 is a named production model, not a router or an Adaption stack.
+     - JSON output: Adaption has no JSON mode. The unchanged judge prompt asks for JSON, and the parser validates every reply.
+     - Cost: Adaption bills in credits. At the pilot check's mean of 0.0048 credits a call, 600 judgements come to about 2.9 credits. That is above §5's ceiling of about $2 if a credit is worth a dollar. The ceiling was set for paid OpenRouter credit, and this judge is paid from sponsor credits.
+
+     The settings were committed in `models.yaml` (`e578ba5`) before any judge call: temperature 0; the provider's default reasoning, since Adaption has no reasoning parameter; at most 4,000 output tokens including reasoning; no seed, since Adaption accepts none. The prompt and the blinding are unchanged (`src/judge.py`).
+  3. **The cross-check judge is dropped**, by the author's decision. No second judge scores any response.
+
+  Consequences:
+  - The §5 gate (linear-weighted kappa of at least 0.6 between the two judges) cannot be evaluated. Confirmatory H3 is therefore "not tested". It enters the Holm family with p = 1, as §7 (rev 3.4) prescribes for an untested H3, so the family stays at eight.
+  - glm-5.2's scope-accuracy scores are reported as exploratory and unvalidated. This covers the 0/1/2 distribution, the share mentioning the credential, the H3 statistic computed from them (unadjusted, outside the Holm family), Figure 3 and the example justifications.
+    - Each is labelled so wherever it appears: `results_summary.md`, the CSVs, the figure, and `REPORT_DRAFT.md` §3.4 and §4.5.
+    - Appendix A of the report gains a limitation saying so. With one judge, neither the consistency nor the correctness of its scoring is checked.
+  - The same change updates:
+    - `models.yaml`: the cross-check is marked dropped;
+    - `src/grade.py`: a new gate status, "unevaluable";
+    - `src/analyse.py`: a new scope-accuracy source, "exploratory";
+    - `RUNBOOK.md`: the cross-check leaves the run order;
+    - `REPORT_DRAFT.md` and `README.md`.
+
+  The pilot judge check, the format check §5 requires before main-data judging, ran just before this entry (`e64307a`): 10 of 10 scores were valid. It was preceded by one logged test call on the pilot response the check does not use. No main-data response had been judged when this entry was written.

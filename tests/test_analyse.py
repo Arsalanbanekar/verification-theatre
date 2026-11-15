@@ -154,9 +154,11 @@ def test_outputs_are_written(scenario):
 def test_draft_states_the_current_facts():
     text = " ".join(DRAFT.read_text(encoding="utf-8").split())           # independent of line wrapping
     for stale in ("Gemini 3.1", "Gemini 3.6", "spot check", "Spot check", "rev 3.1", "data/results_summary.md",
-                  "Gemma", "hand-label", "9 of 10 pilot calls", "judge–human", "human labels,"):
+                  "Gemma", "hand-label", "9 of 10 pilot calls", "judge–human", "human labels,",
+                  "A free model from another family", "agreement between the two judges"):   # dropped (DEVIATIONS.md)
         assert stale not in text, stale
-    for fact in ("rev 3.3", "rev 3.4", "Gemini 3.5 Flash-Lite", "weighted kappa is at least 0.6", "no human labels",
+    for fact in ("rev 3.3", "rev 3.4", "Gemini 3.5 Flash-Lite", "exploratory and unvalidated", "no human labels",
+                 "single LLM judge (glm-5.2)", "H3 was not tested", "(H3; exploratory, unvalidated)",
                  "paired t-tests over pairs", "Holm correction over the eight", "upper bound of the 95% CI",
                  "data/results/results_summary.md"):
         assert fact in text, fact
@@ -491,6 +493,61 @@ def test_withheld_judge_results_are_not_reported_and_holm_keeps_eight(tmp_path):
     forced = A.analyse(raw, graded, tmp_path / "forced", tmp_path / "no_pilot", DRAFT, R.REPO / "models.yaml", "judge")
     assert forced["forced"] and "JUDGE RESULTS FORCED" in (tmp_path / "forced" / "results_summary.md").read_text(
         encoding="utf-8")
+
+
+def test_exploratory_scores_are_labelled_and_h3_is_not_tested(tmp_path):
+    """No cross-check judge (DEVIATIONS.md, 15 Nov 2026): the gate is unevaluable, confirmatory H3 enters Holm with
+    p = 1, the one judge's scores appear only as exploratory, unvalidated numbers labelled so, and no other result
+    moves."""
+    raw, graded, out = tmp_path / "raw", tmp_path / "graded", tmp_path / "results"
+    S.generate(raw, "effect", seed=SEED)
+    S.grade_with_fake_judge(raw, graded, "effect", seed=SEED)
+    (graded / "judge_crosscheck.jsonl").unlink()                         # the real run has no cross-check
+    res = run(tmp_path, raw, graded)
+    assert res["source"] == "exploratory" and res["gate"]["status"] == "unevaluable" and not res["forced"]
+    rows = res["fam"][("pooled", "real_obscure")]
+    h3 = A.find(rows, "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    assert h3["not_testable"] == "no cross-check judge" and np.isnan(h3["p"]) and np.isnan(h3["p_holm"])
+    assert A.h3_verdict(h3) == (False, "H3 was not tested: " + A.REASONS["no cross-check judge"] + ".")
+    others = [r for r in rows if r["primary"] and r["hypothesis"] != "H3"]
+    assert len(others) == 7
+    assert np.allclose([r["p_holm"] for r in others], A.holm([r["p"] for r in others] + [1.0])[:-1])
+
+    # H3's statistic on the same scores, outside the family: the computation a passed gate would have run
+    x = pd.read_csv(out / "h3_exploratory.csv")
+    assert len(x) == 15 and set(x["scores"]) == {A.EXPLORATORY}
+    xr = x[(x["model_scope"] == "pooled") & (x["claim_type"] == "real_obscure")].iloc[0]
+    forced = A.analyse(raw, graded, tmp_path / "forced", tmp_path / "no_pilot", DRAFT, R.REPO / "models.yaml", "judge")
+    fh3 = A.find(forced["fam"][("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
+    assert forced["forced"] and xr["n_pairs"] == fh3["n_pairs"] > 0
+    for k in ("delta", "ci_low", "ci_high", "p"):
+        assert xr[k] == pytest.approx(fh3[k])
+
+    # no other result moves: every test but H3 equals the run without any scope scores
+    A.analyse(raw, graded, tmp_path / "none", tmp_path / "no_pilot", DRAFT, R.REPO / "models.yaml", "none")
+    a, b = (pd.read_csv(d / "primary_tests.csv") for d in (out, tmp_path / "none"))
+    a, b = (t[t["hypothesis"] != "H3"].reset_index(drop=True) for t in (a, b))
+    pd.testing.assert_frame_equal(a, b)
+
+    # labelled wherever a scope-accuracy number appears
+    summary = (out / "results_summary.md").read_text(encoding="utf-8")
+    for text in ("Scope-accuracy source: **exploratory**", "> **Scope accuracy is exploratory and unvalidated.**",
+                 "## Scope accuracy (H3): exploratory, unvalidated", "Confirmatory H3: **NOT TESTED**",
+                 "H3's statistic on the exploratory, unvalidated scores", "scope: share scored 2 (exploratory)",
+                 "**Exploratory, unvalidated** (one judge, no cross-check). Real-obscure pairs", "| `h3_exploratory.csv` |",
+                 "- §3.4, §4.5 and Appendix A: scope accuracy is exploratory and unvalidated"):
+        assert text in summary, text
+    for name in ("scope_distribution.csv", "scope_accuracy.csv"):
+        assert set(pd.read_csv(out / name)["scores"]) == {A.EXPLORATORY}, name
+    assert set(pd.read_csv(out / "per_model.csv")["scope_scores"]) == {A.EXPLORATORY}
+    assert "Scores: exploratory, unvalidated." in (out / "example_justifications.md").read_text(encoding="utf-8")
+    s = res["slots"]
+    assert s["H3_SENTENCE"].startswith("Scope accuracy is exploratory and unvalidated") and "not a test of H3" in s["H3_SENTENCE"]
+    assert "was dropped" in s["KAPPA"] and "exploratory and unvalidated" in s["KAPPA"]
+    assert s["JUDGE_MODEL"].startswith("`glm-5.2` via Adaption")
+    filled = " ".join((out / "REPORT_DRAFT.filled.md").read_text(encoding="utf-8").split())
+    assert "Scope accuracy by condition Scope accuracy is exploratory and unvalidated: one judge scored it" in filled
+    assert "no human labels are used. The pre-registered cross-check by a second judge was dropped" in filled
 
 
 def test_partial_data_runs_and_pilot_files_are_ignored(scenario, tmp_path):

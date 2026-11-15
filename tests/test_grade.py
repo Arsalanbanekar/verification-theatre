@@ -304,6 +304,27 @@ def test_agreement_gate(dirs, agree, status):
     assert a["overall"]["n_items"] == 100 and a["overall"]["n_both_scored"] < 100   # N/A takes no part in kappa
 
 
+def test_dropped_crosscheck_refuses_and_leaves_the_gate_unevaluable(dirs, capsys):
+    """models.yaml marks the cross-check dropped (DEVIATIONS.md, 15 Nov 2026): --crosscheck refuses before any
+    call, and with main-judge scores but no cross-check the gate is "unevaluable", never pending or failed."""
+    real = R.REPO / "models.yaml"
+    cfg = R.load_config(real)
+    assert J.crosscheck_dropped(cfg) and J.config_problems(cfg, "crosscheck")[0].startswith(
+        "the cross-check judge was dropped")
+    assert grade(dirs, "--crosscheck", config=real) == 1 and "was dropped" in capsys.readouterr().out
+    S.grade_with_fake_judge(dirs["raw"], dirs["graded"], "effect", seed=3)
+    assert G.judge_agreement(cfg, dirs["graded"])["status"] == "passed"     # the rehearsal's fake cross-check counts
+    (dirs["graded"] / "judge_crosscheck.jsonl").unlink()
+    a = G.judge_agreement(cfg, dirs["graded"])
+    assert a["status"] == "unevaluable" and a["crosscheck_dropped"] and a["n_crosschecked"] == 0
+    assert grade(dirs, "--agreement", config=real) == 0
+    out = capsys.readouterr().out
+    assert "No cross-check judge: it was dropped" in out and "exploratory and unvalidated" in out
+    assert json.loads((dirs["graded"] / "judge_agreement.json").read_text(encoding="utf-8"))["status"] == "unevaluable"
+    (dirs["graded"] / "judge_main.jsonl").unlink()
+    assert G.judge_agreement(cfg, dirs["graded"])["status"] == "none"
+
+
 def test_agreement_is_pending_until_both_judges_finish(dirs, capsys):
     S.grade_with_fake_judge(dirs["raw"], dirs["graded"], "effect", seed=3)
     cfg = R.load_config(R.REPO / "models.yaml")

@@ -125,9 +125,18 @@ def judge_config(cfg: dict, role: str) -> dict:
     return dict(((cfg.get("judges") or {}).get(role)) or {})
 
 
+def crosscheck_dropped(cfg: dict) -> str:
+    """Why the cross-check judge was dropped, if models.yaml says it was (DEVIATIONS.md, 15 Nov 2026);
+    empty otherwise."""
+    return str(judge_config(cfg, "crosscheck").get("dropped") or "")
+
+
 def config_problems(cfg: dict, role: str) -> list[str]:
     """The §5 (rev 3.4) criteria that can be checked mechanically. Which model is the strongest
     under the price limit, and its family, are decided by hand when the model is chosen."""
+    if role == "crosscheck" and crosscheck_dropped(cfg):
+        return [f"the cross-check judge was dropped ({crosscheck_dropped(cfg)}): no cross-check is run, and the "
+                "§5 kappa gate cannot be evaluated."]
     j, main = judge_config(cfg, role), judge_config(cfg, "main")
     mid = str(j.get("model_id") or "")
     if not mid:

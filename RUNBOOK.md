@@ -14,8 +14,8 @@ see; section 12 lists what can go wrong and what to do.
 6. [Timeline](#6-timeline)
 7. [Main run: Groq, then Gemini](#7-main-run-groq-then-gemini)
 8. [Gemini, second quota day](#8-gemini-second-quota-day)
-9. [The judges: choosing, checking, judging](#9-the-judges-choosing-checking-judging)
-10. [The judges' agreement (the §5 gate)](#10-the-judges-agreement-the-5-gate)
+9. [The judge: choosing, checking, judging](#9-the-judge-choosing-checking-judging)
+10. [The §5 agreement gate: cannot be evaluated](#10-the-5-agreement-gate-cannot-be-evaluated)
 11. [Analysis](#11-analysis)
 12. [Failure modes and fixes](#12-failure-modes-and-fixes)
 13. [Filling REPORT_DRAFT.md](#13-filling-report_draftmd)
@@ -33,9 +33,10 @@ see; section 12 lists what can go wrong and what to do.
 
   The README's "Pre-sprint vs sprint work" section says so, and the report gives the collection
   dates (section 13).
-- **The judges are chosen before any main-data judging** (pre-registration §5, rev 3.4): their
-  model IDs, families and serving providers go into `models.yaml` and are committed on their own
-  before `grade.py --judge` or `--crosscheck` first runs (section 9).
+- **The judge is chosen before any main-data judging** (pre-registration §5, rev 3.4): its model
+  ID, family and serving provider go into `models.yaml` and are committed on their own before
+  `grade.py --judge` first runs (section 9). Since 15 Nov 2026 that is one judge, glm-5.2 on
+  Adaption, with no cross-check (`DEVIATIONS.md`).
 - **Never edit, move or delete anything in `data/raw/`, `data/pilot/` or `data/logs/`, and
   never alter a timestamp.** The scripts only append, and every response records when it was
   collected. A torn last line after a crash is skipped automatically.
@@ -65,9 +66,9 @@ Check that the keys are present, without printing them:
 python -c "import pathlib; print(sorted(l.split('=')[0] for l in pathlib.Path('.env').read_text().splitlines() if '=' in l and l.split('=',1)[1].strip()))"
 git check-ignore .env
 ```
-You should see `['GEMINI_API_KEY', 'GROQ_API_KEY', 'OPENROUTER_API_KEY']`, then `.env` (git ignores
-it). `OPENROUTER_API_KEY` is needed only for the judges (section 9); add it as a line
-`OPENROUTER_API_KEY=...` in `.env` once you have an OpenRouter account with credit.
+You should see `['ADAPTION_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY']`, then `.env` (git ignores
+it). `ADAPTION_API_KEY` is needed only for the judge (section 9). The pre-registered OpenRouter
+judges, and so `OPENROUTER_API_KEY`, were replaced on 15 Nov 2026 (`DEVIATIONS.md`).
 
 ```
 python src/runner.py --check-models
@@ -79,7 +80,7 @@ groq: openai/gpt-oss-120b          available
 groq: openai/gpt-oss-20b           available
 groq: qwen/qwen3.8-27b             available
 ```
-The judges are not listed here; the pilot's judge check exercises the main judge (section 4).
+The judge is not listed here; the pilot's judge check exercises it (section 4).
 
 ```
 python src/runner.py --dry-run
@@ -113,8 +114,9 @@ results -> data\synthetic\results
 ```
 Open `data/synthetic/results/results_summary.md`, `REPORT_DRAFT.filled.md` and the four PNGs.
 The fake data raises acceptance in C1–C4, separates the twins in C5, and has the interpreter
-cut acceptance. Fake scores come from both judges, agreeing 90% of the time. Until the judges
-are chosen, the §3.4 slot reads `[the judges are not chosen yet: ...]`. `data/synthetic/` is
+cut acceptance. Fake scores come from two judges, agreeing 90% of the time: the rehearsal still
+fakes the cross-check to exercise the agreement code. The real run has no cross-check
+(`DEVIATIONS.md`, 15 Nov 2026), so its scope-accuracy source is `exploratory` (section 11). `data/synthetic/` is
 git-ignored; delete it whenever you like.
 
 ## 4. The pilot (first)
@@ -185,14 +187,14 @@ git log --oneline -1 pre-sprint
 `git status` should report nothing to commit. From here, no code changes. If a bug forces one,
 commit it on its own with a message saying why, and add a `DEVIATIONS.md` entry.
 
-One change is part of the protocol: filling in the judges in `models.yaml` (section 9a), which
+One change is part of the protocol: filling in the judge in `models.yaml` (section 9a), which
 pre-registration §5 requires before any main-data judging. Commit it on its own.
 
 ## 6. Timeline
 
 Step 1 was done before the sprint, and step 2 on 13 Nov 2026, before the main run. Main data
-collection runs during the sprint, from 13 Nov: the three Groq models, then gemini-3.5-flash-lite. The judges come after the main
-run. Choosing them needs OpenRouter credit and can happen any time before that.
+collection runs during the sprint, from 13 Nov: the three Groq models, then gemini-3.5-flash-lite. The judge comes after the main
+run. Since 15 Nov 2026 it is glm-5.2 on Adaption, with no cross-check (`DEVIATIONS.md`).
 
 | Step | What | Command | Takes |
 |---|---|---|---|
@@ -201,19 +203,16 @@ run. Choosing them needs OpenRouter credit and can happen any time before that.
 | 3 | Groq: gpt-oss-120b, gpt-oss-20b, qwen3.8-27b | `python src/runner.py --models gpt-oss-120b,gpt-oss-20b,qwen3.8-27b` | 30–90 min |
 | 4 | Gemini, up to its daily quota | `python src/runner.py --models gemini-3.5-flash-lite` | ~40 min, then it stops for the day |
 | 5 | Gemini's remaining cells, after the time it prints | the same command | ~20 min |
-| 6 | Choose the judges and commit `models.yaml` | section 9a | 30 min |
-| 7 | Pilot judge check | `python src/runner.py --pilot` | a few minutes |
+| 6 | Choose the judge and commit `models.yaml` (done 15 Nov: glm-5.2 via Adaption, `e578ba5`) | section 9a | 30 min |
+| 7 | Pilot judge check (done 15 Nov: 10/10 valid, PASS, `e64307a`) | `python src/runner.py --pilot` | a few minutes |
 | 8 | Main judge, once all four models are done | `python src/grade.py --judge` | 15–45 min |
-| 9 | Cross-check judge, 48 calls a UTC day | `python src/grade.py --crosscheck` | three UTC days; see section 9c |
-| 10 | Agreement, then analysis | `python src/grade.py --agreement`, then `python src/analyse.py` | 2 min |
-| 11 | Write up, check, submit | sections 13–14 | |
+| 9 | Analysis | `python src/analyse.py` | 2 min |
+| 10 | Write up, check, submit | sections 13–14 | |
 
-The cross-check is the slowest step. It can only start once the main run is complete, because
-its 100 responses come from the main judge's sample, so start it as soon as Gemini finishes.
-
-Gemini started on 13 Nov after 13:30 IST finishes after 13:30 IST on 14 Nov. At 48 calls per
-UTC day, the cross-check then has 96 of its 100 calls done when the sprint ends on 15 Nov, and
-the §5 gate stays PENDING. Section 9c gives the fix.
+The pre-registered cross-check judge (100 responses scored by a second, free model) is dropped
+from the run order (`DEVIATIONS.md`, 15 Nov 2026): `grade.py --crosscheck` refuses, the §5 gate
+cannot be evaluated (section 10), and the analysis reports the judge's scores as exploratory
+and unvalidated.
 
 **Gemini's quota.** Gemini allows 500 calls a day, and its day resets at midnight US Pacific,
 which is 13:30 IST.
@@ -278,7 +277,7 @@ python src/grade.py
 3,380 is 2,880 Groq plus 500 Gemini. It is a few fewer if the pilot shared Gemini's day, or if
 some cells were skipped after errors.
 - Check the parse-failure rates.
-- Do **not** run `--judge` or `--crosscheck` yet. The judge sample is drawn once, stratified
+- Do **not** run `--judge` yet. The judge sample is drawn once, stratified
   across all four models, so it must wait for Gemini to finish. `grade.py` refuses until then.
 
 Commit what you have (it is append-only data):
@@ -304,55 +303,54 @@ git add data/raw data/logs
 git commit -m "Main run complete"
 ```
 
-## 9. The judges: choosing, checking, judging
+## 9. The judge: choosing, checking, judging
 
-Pre-registration §5 (rev 3.4) sets up two judges:
-- a paid OpenRouter model scores the stratified sample of 600;
-- a free OpenRouter model from another family scores 100 of those.
+Pre-registration §5 (rev 3.4) set up two OpenRouter judges: a paid model scoring the stratified
+sample of 600, and a free model from another family scoring 100 of those, with judge results
+reported only if the two agreed. On 15 Nov 2026, before any main-data judging, the author
+changed this (`DEVIATIONS.md`): one judge, `glm-5.2` on Adaption (sponsor credits), and no
+cross-check. Its scores are exploratory and unvalidated, and confirmatory H3 is not tested
+(section 10). No human labels are used.
 
-Judge results are reported only if the two agree (section 10). No human labels are used.
+**9a. Choosing the judge (done 15 Nov 2026).**
+1. Add `ADAPTION_API_KEY=...` to `.env` (section 2). `pip install -r requirements.txt` installs
+   the `adaption` SDK.
+2. List the models the key can call:
+   ```
+   python -c "import sys; sys.path.insert(0, '.'); from src import runner as R; R.load_env(R.REPO / '.env'); import adaption; print([m.id for m in adaption.Adaption().models.list().data])"
+   ```
+   The §5 exclusions apply: not from OpenAI (including gpt-oss), Qwen/Alibaba or Google, and not
+   a router, an unnamed model or an Adaption `stack:`. On 15 Nov that left glm-5.2, glm-5.3-flash
+   and deepseek-v4-flash, and the author chose glm-5.2.
+3. Fill in `models.yaml` under `judges: main`:
+   - `provider: adaption`, `model_id`, and `family` (the developer);
+   - `temperature: 0.0`;
+   - the prices, `price_credits_per_mtok` from Adaption's models page, and a `budget_credits` hard
+     stop.
 
-**9a. Choosing the judges (before any main-data judging).**
-1. Buy OpenRouter credit (openrouter.ai, *Credits*), create a key, and add it to `.env` as
-   `OPENROUTER_API_KEY=...` (section 2).
-2. Free models: their providers may log prompts and may train on them. To use one, allow it in
-   the privacy settings at openrouter.ai/settings/privacy, which has separate settings for paid
-   and free models. The judge prompts contain only corpus claims, credential facts and
-   study-model justifications, with no personal data; pre-registration §9 states this.
-3. Shortlist the top 3 candidates for each judge, with prices, from OpenRouter's model list.
-   The criteria are in pre-registration §5:
-   - **Exclusions, both judges.** Not from OpenAI (including gpt-oss), Qwen/Alibaba or Google,
-     and not a router or unnamed model.
-   - **Main judge.** A named, paid production model that supports JSON output: the strongest
-     reasoning model under about $2 for 600 judgements.
-   - **Cross-check.** A `:free` model from a third family.
-4. Fill in `models.yaml`, under `judges:`, for `main` and `crosscheck`:
-   - `model_id`;
-   - `family`, for example the developer;
-   - `route.order`, the single provider slug that will serve the model;
-   - `reasoning`, if any;
-   - `json_mode`: `json_schema`, or `json_object` if the pinned provider supports only that.
-
-   `grade.py` and the pilot check the criteria that can be checked mechanically and refuse a
-   configuration that breaks them. Commit it on its own:
+   Adaption has no JSON mode, seed or reasoning parameter. The prompt asks for JSON, the parser
+   validates every reply, and reasoning stays at the provider default, which is logged as such.
+   `grade.py` and the pilot check the criteria that can be checked mechanically, and refuse a
+   configuration that breaks them. Commit it on its own (`e578ba5`):
    ```
    git add models.yaml
-   git commit -m "Judges chosen (pre-registration §5): <main id> via <provider>; cross-check <free id> via <provider>"
+   git commit -m "Main judge chosen (pre-registration §5): glm-5.2 via Adaption"
    ```
-5. Run the pilot judge check (section 4, stage 2).
+4. Run the pilot judge check (section 4, stage 2). Done 15 Nov: 10 of 10 valid (`e64307a`).
 
-**9b. The main judge**, once every model has finished (section 8):
+**9b. The judge**, once every model has finished (section 8):
 ```
 python src/grade.py --judge
 ```
 ```
 3600 completed cells -> data\graded\responses.csv
   ...
-main judge <model> via <provider>: sample 600; already judged 0; to judge 600. Ctrl+C stops cleanly.
-  [main judge] 25/600 judged (this run 25, valid 25) | $0.0612 spent
+main judge glm-5.2 via adaption: sample 600; already judged 0; to judge 600. Ctrl+C stops cleanly.
+  [main judge] 25/600 judged (this run 25, valid 25) | 0.1210 credits spent
   ...
-main judge: 600 judged in this run (598 valid); 600 of 600 in all; $1.4210 spent on this model.
+main judge: 600 judged in this run (598 valid); 600 of 600 in all; 2.9000 credits spent on this model.
 Every response in the main judge's sample is judged.
+No cross-check judge: it was dropped (15 Nov 2026, by the author's decision; see DEVIATIONS.md). The §5 gate cannot be evaluated, so confirmatory H3 is not tested (Holm p = 1) and the main judge's scope-accuracy scores are reported as exploratory and unvalidated.
 ```
 - **The sample.** The first run draws the 600 across all four models and fixes them in
   `data/graded/judge_sample.csv`. While any model still has cells to run, `grade.py` refuses to
@@ -360,60 +358,47 @@ Every response in the main judge's sample is judged.
 - **How it runs.** 8 requests run at once, so this takes minutes, not hours. Each response is
   judged once; a re-run skips what this model has already judged.
 - **Logs.** Every attempt, failed or not, goes to `data/graded/judge_main.attempts.jsonl`; the
-  judgements go to `judge_main.jsonl`.
-- **Cost.** `budget_usd` in `models.yaml` ($3.00) is a hard stop on OpenRouter's measured cost.
+  judgements go to `judge_main.jsonl`. The SDK's own retries are off, so every attempt is one the
+  judge makes and logs.
+- **Cost.** `budget_credits` in `models.yaml` (10 credits) is a hard stop on the cost computed from
+  the prices in `models.yaml`. Adaption also reports each call's cost in its usage, which is logged
+  with every call; the two agreed on every pilot call.
 
-**9c. The cross-check judge.** It can run alongside 9b, in a second terminal:
+**9c. The cross-check judge: dropped** (`DEVIATIONS.md`, 15 Nov 2026). `python src/grade.py
+--crosscheck` refuses:
 ```
-python src/grade.py --crosscheck
+The cross-check judge cannot run:
+  - the cross-check judge was dropped (15 Nov 2026, by the author's decision; see DEVIATIONS.md): no cross-check is run, and the §5 kappa gate cannot be evaluated.
 ```
-- **What it judges.** 100 responses: a stratified subset of the main sample, fixed in
-  `data/graded/crosscheck_sample.csv`.
-- **Daily cap.** OpenRouter allows 50 free-model calls per UTC day until 10 credits have been
-  bought. The judge stops itself at 48 calls a UTC day, counting failed attempts, and prints:
-  `Stopped: daily cap reached: 48 calls to <model> on <date> UTC (cap 48). Resume after 00:00 UTC (05:30 IST).`
-  If OpenRouter itself reports the daily limit (`OpenRouter reports that today's limit ... is
-  used up`), it also stops until 05:30 IST.
-- **Resuming.** Re-run the same command after 05:30 IST; it continues where it stopped. 100
-  calls take three UTC days: 48, 48, then 4. A UTC day begins at 05:30 IST, so a session
-  shortly before 05:30 and another just after it use two days' allowance within an hour.
-- **Changing the cap.** It is `limits.rpd` under `judges.crosscheck` in `models.yaml`. Like the
-  other rate limits, it is pacing, not protocol. Once 10 credits have been bought, OpenRouter
-  allows 1000 free calls a day. That is how the cross-check finishes within this sprint
-  (section 6):
-  1. Buy at least 10 credits.
-  2. Raise `rpd`, for example to 900, and commit the change.
-  3. The 100 calls then take a single session.
 
-Both judges print every failed attempt as `[main judge] HTTP ...` or `[crosscheck judge] HTTP
-...`, and Ctrl+C stops either one cleanly.
+The judge prints every failed attempt as `[main judge] HTTP ...`, and Ctrl+C stops it cleanly.
 
-## 10. The judges' agreement (the §5 gate)
+## 10. The §5 agreement gate: cannot be evaluated
 
+The pre-registered gate reports judge results only if the two judges' linear-weighted kappa on
+the 100 cross-checked responses is at least 0.6. With the cross-check dropped there is no kappa:
 ```
 python src/grade.py --agreement
 ```
 ```
-Judges' agreement on the cross-check sample (100 of 100 cross-checked): weighted kappa (linear, responses both scored 0-2) 0.74 (n=81); Cohen's kappa over 4 categories 0.69; exact agreement 0.80; N/A agreement 0.93
-  gemini   n= 21  weighted kappa 0.70
-  gpt-oss  n= 39  weighted kappa 0.77
-  qwen     n= 21  weighted kappa 0.72
-Pre-registered gate (§5): weighted kappa 0.74 is at least 0.6. PASSED: judge results are reported.
+No cross-check judge: it was dropped (15 Nov 2026, by the author's decision; see DEVIATIONS.md). The §5 gate cannot be evaluated, so confirmatory H3 is not tested (Holm p = 1) and the main judge's scope-accuracy scores are reported as exploratory and unvalidated.
 ```
-Your numbers will differ. The same lines are printed after each judging run, and the result is
-saved in `data/graded/judge_agreement.json`.
-- **PASSED**: H3 and the scope-accuracy numbers are reported.
-- **FAILED**: kappa is below 0.6, or cannot be computed. The analysis withholds the judge
-  results and does not test H3. The report gives the kappa instead.
-- **PENDING**: a judge has not yet scored all 100 cross-check responses.
+`data/graded/judge_agreement.json` records the status `unevaluable`. The consequences, in
+`src/analyse.py` and in the report:
+- Confirmatory H3 is not tested. It enters the Holm family with p = 1, so the family stays at
+  eight.
+- The scope-accuracy numbers are reported as exploratory and unvalidated, and labelled so
+  wherever they appear: the 0/1/2 distribution, the mention share, Figure 3 and the examples.
+- So is H3's statistic computed from the one judge's scores (`h3_exploratory.csv`). It is outside
+  the Holm family, so its p is unadjusted.
 
-The weighted kappa counts only responses both judges scored 0–2; N/A agreement is reported
-alongside.
+The agreement code still runs on the synthetic rehearsal, which fakes a cross-check (section 3).
+There it prints PASSED, FAILED or PENDING, as pre-registered.
 
 Commit the grades:
 ```
 git add data/graded
-git commit -m "Grading, both judges and their agreement"
+git commit -m "Grading: the judge's scores (exploratory, unvalidated)"
 ```
 
 ## 11. Analysis
@@ -423,10 +408,18 @@ python src/analyse.py
 ```
 ```
 results -> data\results
-  scope-accuracy source: judge (the judges' weighted kappa is 0.74 on 81 responses, at least 0.6: judge results are reported); 28 draft slots filled automatically, 0 need a hand fill
+  scope-accuracy source: exploratory (no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be evaluated: the main judge's scores are exploratory and unvalidated, and confirmatory H3 is not tested); 28 draft slots filled automatically, 0 need a hand fill
+  EXPLORATORY: every scope-accuracy number is exploratory and unvalidated (one judge, no cross-check); confirmatory H3 is not tested; h3_exploratory.csv holds H3's statistic outside the Holm family
 ```
-- The source reads one of three values:
-  - `judge`: the §5 gate passed.
+- The source reads one of four values:
+  - `exploratory`: the run as it stands since 15 Nov 2026. There is no cross-check judge
+    (`DEVIATIONS.md`), so the §5 gate cannot be evaluated.
+    - Confirmatory H3 is not tested and enters Holm with p = 1.
+    - The judge's scores, and H3's statistic computed from them (`h3_exploratory.csv`, outside the
+      Holm family), are reported as exploratory and unvalidated.
+    - The summary, CSVs, Figure 3, the examples and the draft slots all carry that label. Keep it
+      wherever a scope-accuracy number is cited.
+  - `judge`: the §5 gate passed (only with a cross-check).
   - `withheld`: the cross-check is unfinished, or the kappa is below 0.6. The H3 text then says
     why scope accuracy is not reported, and H3 enters Holm with p = 1.
   - `none`: no judge scores exist yet.
@@ -444,9 +437,10 @@ Outputs in `data/results/`:
 | `REPORT_DRAFT.filled.md` | The draft with every slot substituted, for checking |
 | `fig1_acceptance.png` | Figure 1, §4.2 |
 | `fig2_discrimination.png` | Figure 2, §4.4 |
-| `fig3_scope_accuracy.png`, `fig4_interpreter.png` | Optional figures for §4.5 and §4.7 |
-| `example_justifications.md` | Candidate verbatim quotes for §4.5 |
-| `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs |
+| `fig3_scope_accuracy.png`, `fig4_interpreter.png` | Optional figures for §4.5 and §4.7; Figure 3 is exploratory and unvalidated |
+| `example_justifications.md` | Candidate verbatim quotes for §4.5, with exploratory, unvalidated scores |
+| `scope_distribution.csv` | H3: mention share and the 0/1/2 shares with 95% CIs (exploratory, unvalidated) |
+| `h3_exploratory.csv` | H3's statistic on the one judge's scores, per scope and claim type, outside the Holm family |
 | `parse_failures_by_condition.csv`, `parse_failure_types.csv` | Parse failures per model and condition, flagged where a rate is over double the model's own, and what the failed generations looked like. The summary's "Parse failures" section says whether they concentrate in a condition. |
 | `robustness_without_qwen.csv`, `robustness_qwen_bounds.csv` | Exploratory checks (`DEVIATIONS.md`, 15 Nov): every primary test pooled without qwen3.8-27b, and qwen3.8-27b's tests with its parse failures set to accept = false, then true |
 | `primary_tests.csv` and the other CSVs | Every number, per model and claim type |
@@ -458,8 +452,11 @@ How to read the numbers:
   tests.
 - **H3** is supported only if the upper bound of the 95% CI for the share of
   credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05.
-  The summary's "Scope accuracy (H3)" section states the verdict and gives the full 0/1/2
-  distribution and the share mentioning the credential, all with CIs.
+  Without the cross-check (section 10), H3 is not tested.
+  - The summary's "Scope accuracy (H3): exploratory, unvalidated" section says so.
+  - It gives the full 0/1/2 distribution and the share mentioning the credential, all with CIs.
+  - It also reads H3's statistic against the rule, outside the Holm family. Cite all of these
+    only as exploratory and unvalidated.
 - **Robustness section.** If it lists a disagreement between the t-test and the permutation
   test, report the t-test, which is the pre-specified primary, and give the permutation result
   beside it.
@@ -532,14 +529,15 @@ git commit -m "Analysis results"
 | `... failed the pilot judge check` | The chosen judge returned fewer than 9 of 10 valid scores | Correct the request or choose the next candidate (section 4, stage 2) |
 | `Note: the pilot has no passed judge check for ...` | The check has not been run for this model | Run `python src/runner.py --pilot` first |
 | `The judge sample is drawn once, across every model, so it waits for the main run to finish` | A model still has cells to run | Finish the main run. `--force` draws the sample anyway; record that in `DEVIATIONS.md`. |
-| `OPENROUTER_API_KEY is not set` | Key missing from `.env` | Add the line `OPENROUTER_API_KEY=...` to `.env` |
+| `ADAPTION_API_KEY is not set` | Key missing from `.env` | Add the line `ADAPTION_API_KEY=...` to `.env` |
 | `[main judge] HTTP 503: ...; retry 2 of 5 in 20s`, or `HTTP None: ReadTimeout`, or `HTTP 200: Provider returned error` | The provider is busy, the call timed out, or an error came back inside a 200 | Nothing; it retries 5 times. Every attempt is logged in the `.attempts.jsonl` file. |
-| `[crosscheck judge] HTTP 429: ... rate-limited upstream ...; rate limited: retrying` | The free model's provider is busy | Nothing; it waits and retries. Each retry counts toward the 48. |
-| `Stopped: daily cap reached: 48 calls ...` or `OpenRouter reports that today's limit ... is used up` | The free model's daily allowance is used | Re-run after 05:30 IST (00:00 UTC) |
-| `Stopped: OpenRouter reports insufficient credits (HTTP 402)` | The account is out of credit | Add credit at openrouter.ai/settings/credits, re-run |
-| `Stopped: spend cap passed: ...` | `budget_usd` for that judge was passed | Check the spend; raise the cap only by decision |
+| `[main judge] HTTP 429: ...; rate limited: retrying in Ns` | Adaption is limiting the request rate (its limits are not documented) | Nothing; it waits (Retry-After, if sent) and retries, up to 10 times per response |
+| `Adaption reports that today's limit ... is used up` | Adaption reported a daily limit | Re-run later; the judge resumes where it stopped |
+| `Stopped: Adaption reports insufficient credits (HTTP 402)` | The organisation's credits are used up | Check the credit balance with Adaption, re-run |
+| `Stopped: spend cap passed: ...` | `budget_credits` for the judge was passed | Check the spend; raise the cap only by decision |
+| `The cross-check judge cannot run: ... was dropped` | The cross-check is dropped (`DEVIATIONS.md`) | Nothing: it is not part of the run (section 9c) |
 | `Stopped: ... kept failing` or `... stayed rate-limited` | Provider trouble | Wait 10–30 minutes, re-run |
-| `Stopped: the request was rejected (HTTP 4xx)` | Key, model id, pinned provider or a parameter the provider does not support (HTTP 404 or 503 "no available provider" usually means `route` or `json_mode` does not match the endpoint) | Check `models.yaml` against the model's endpoints on openrouter.ai; read the `body` in the `.attempts.jsonl` file |
+| `Stopped: the request was rejected (HTTP 4xx)` | Key, model id or a parameter Adaption does not accept | Check the key and `model_id` against the model list (section 9a); read the `body` in the `.attempts.jsonl` file |
 | `Interrupted in the judge stage: ...` (pilot) or `Interrupted: finishing the judge calls in flight` | You pressed Ctrl+C | Re-run the same command. Judged responses are kept; an interrupted pilot check reports INCOMPLETE, not FAIL. |
 
 **Analysis**
@@ -548,7 +546,8 @@ git commit -m "Analysis results"
 |---|---|---|
 | `No responses in data\raw` | Wrong folder or no data | Run from the repository folder |
 | `scope-accuracy source: none` | No main-judge scores yet | Finish section 9, re-run |
-| `scope-accuracy source: withheld` | The cross-check is unfinished, or the judges' kappa is below 0.6 | Finish 9c if it is unfinished. If the kappa is below 0.6, that is the result: report it (section 13). |
+| `scope-accuracy source: exploratory` | No cross-check judge (dropped, `DEVIATIONS.md`): the expected source for this run | Report scope accuracy as exploratory and unvalidated, and H3 as not tested (section 13) |
+| `scope-accuracy source: withheld` | Only with a cross-check: it is unfinished, or the judges' kappa is below 0.6 | Not expected in this run (the cross-check is dropped) |
 | `by hand: {...}` | A draft placeholder the script does not recognise (the draft was edited) | Fill it from the tables in `results_summary.md` |
 | `PROTOCOL CHECK FAILED` | A model logged two reasoning settings | `DEVIATIONS.md` entry; report it |
 | A slot says `not available` | That part of the data is missing (for example, the interpreter arm was cut) | Say so in the report |
@@ -571,15 +570,17 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
    - the collection dates;
    - the pre-registration commit cited in §3 (the summary flags it if `PREREGISTRATION.md`
      changed after that commit);
-   - if judge results are withheld (section 10), the §3.4 and §4.5 text: give the kappa, say
-     that H3 was not tested, and leave out the scope table and examples.
+   - the §3.4, §4.5 and Appendix A text on the judge: scope accuracy is exploratory and
+     unvalidated (one judge, no cross-check: section 10), and H3 was not tested. Keep that label
+     beside every scope-accuracy number, table, figure and example.
 
-   The draft's facts were updated before the main run: rev 3.4, the four models, the two
-   judges and the kappa rule, the tests, the H3 rule.
+   The draft's facts were updated before the main run (rev 3.4, the four models, the tests, the
+   H3 rule) and again on 15 Nov 2026 for the single judge (`DEVIATIONS.md`).
 4. **Figures:** Figure 1 goes in §4.2 and Figure 2 in §4.4. Figures 3 and 4 are optional for
    §4.5 and §4.7, if space allows (8 pages maximum before references and appendices).
 5. **§4.5 examples:** pick one correct and one misattributing justification from
-   `example_justifications.md`. Read the whole response before quoting it.
+   `example_justifications.md`. Read the whole response before quoting it. Their scores are
+   exploratory and unvalidated; say so if you give them.
 6. **§4.8 models:** use the "Per model" table and the "Scale within family" line from
    `results_summary.md`. Report each model's parse-failure rate (CLAUDE.md requires it).
 7. **Discussion:** one paragraph per point in the draft's structure. Report the countermeasure
@@ -608,9 +609,10 @@ what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
 - [ ] The report contains no `{`: `Select-String -Path REPORT.md -Pattern '\{'` prints nothing.
 - [ ] The report gives:
       - each model's parse-failure rate and reasoning setting;
-      - both judges' model IDs and serving providers;
-      - the judges' kappa, overall and per study-model family;
-      - whether the §5 gate passed.
+      - the judge's model ID and provider (glm-5.2 via Adaption) and its settings;
+      - that the cross-check was dropped, so the §5 gate could not be evaluated and H3 was not
+        tested;
+      - the label "exploratory and unvalidated" on every scope-accuracy number.
 - [ ] The countermeasure result is reported, whichever way it went.
 - [ ] The Limitations and Dual-Use appendix is present. It states that the failure mode needs no
       forgery, and why the work is published now.
@@ -661,14 +663,16 @@ To see the last events:
 Get-Content data\logs\qwen3.8-27b.events.jsonl -Tail 5
 ```
 
-**Judge logs** in `data/graded/`. Each line in `judge_main.attempts.jsonl` and
-`judge_crosscheck.attempts.jsonl` records one HTTP attempt, failed or not:
-- status, outcome, latency and cost;
-- the provider that served it;
+**Judge logs** in `data/graded/`. Each line in `judge_main.attempts.jsonl` records one HTTP
+attempt, failed or not:
+- status, outcome, latency and cost (`cost_credits` on Adaption);
+- the provider that served it and the model it reported;
 - the full body of a failure.
 
-The judgements are in `judge_main.jsonl` and `judge_crosscheck.jsonl`. The pilot's judge check
-uses `data/pilot/judge_check.jsonl` and `data/pilot/logs/judge_check.attempts.jsonl`. Rows by
+The judgements are in `judge_main.jsonl`; with the cross-check dropped there is no
+`judge_crosscheck.jsonl`. The pilot's judge check uses `data/pilot/judge_check.jsonl` and
+`data/pilot/logs/judge_check.attempts.jsonl`, and the one test call before it
+`data/pilot/judge_test_call.jsonl`, which nothing reads. Rows by
 any judge model other than the one in `models.yaml` are ignored. This includes
 `data/pilot/judge.jsonl`, from the judge replaced in rev 3.4.
 
@@ -686,11 +690,11 @@ A `parse_retry` line is superseded by the cell's next attempt.
 | `PREREGISTRATION.md` | The plan (rev 3.4), including the tests and decision rules (§7) and the judges (§5) |
 | `DEVIATIONS.md` | Changes made after data collection began |
 | `REPORT_DRAFT.md` | The draft with `{PLACEHOLDER}` slots |
-| `models.yaml` | Models, limits, prices, budget, the two judges |
+| `models.yaml` | Models, limits, prices, budget, the judge (the cross-check marked dropped) |
 | `src/runner.py` | Study calls, pilot, dry run |
-| `src/grade.py` | Metrics, both judges, their agreement and the §5 gate |
-| `src/judge.py`, `src/providers/openrouter.py` | The judge prompt, the §5 criteria check, concurrent resumable judging via OpenRouter |
+| `src/grade.py` | Metrics, the judge, and the agreement code and §5 gate (unevaluable without a cross-check) |
+| `src/judge.py`, `src/providers/adaption.py`, `src/providers/openrouter.py` | The judge prompt, the §5 criteria check, concurrent resumable judging via Adaption (OpenRouter as planned) |
 | `src/analyse.py` | Tests, figures, results summary |
 | `src/synthetic.py` | Fake data for rehearsal and tests |
 | `data/raw`, `data/pilot` | Append-only responses |
-| `data/graded`, `data/results` | Derived; `data/graded` also holds the judges' paid calls, so keep it |
+| `data/graded`, `data/results` | Derived; `data/graded` also holds the judge's paid calls, so keep it |

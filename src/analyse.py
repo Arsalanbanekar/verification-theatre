@@ -27,6 +27,11 @@ rev 3.3). This file implements them:
 - Judge results (rev 3.4) are used only if the two judges' linear-weighted kappa on the 100
   cross-checked responses is at least 0.6. Until then, or if it is lower, they are withheld: H3
   is not tested and enters Holm with p = 1, so the family stays at eight.
+- Since 15 Nov 2026 (DEVIATIONS.md) there is no cross-check judge, so the gate cannot be evaluated
+  ("unevaluable"). Confirmatory H3 is then not tested (Holm p = 1), and the main judge's scores are
+  used only as exploratory, unvalidated numbers (scope source "exploratory"), labelled so wherever
+  they appear; H3's statistic computed from them is reported outside the Holm family
+  (h3_exploratory.csv), with its own random stream, so no other result changes.
 - results_summary.md opens with C0 acceptance per model and claim type and the C0-ceiling counts.
 - Descriptive 95% CIs (acceptance by condition, discrimination index, scope shares): t-intervals
   over claims or pairs, clipped to the possible range.
@@ -94,6 +99,9 @@ def load_responses(raw_dir: Path, models) -> pd.DataFrame:
 def scope_source(graded_dir: Path, cfg: dict, requested: str = "auto") -> tuple[str, dict]:
     """(source, gate). Sources:
     - "judge": the main judge's scores, used because the judges agree (§5, rev 3.4: kappa >= 0.6);
+    - "exploratory": scores exist, but the cross-check judge was dropped (DEVIATIONS.md, 15 Nov 2026),
+      so the gate cannot be evaluated: the scores are reported as exploratory and unvalidated, and
+      confirmatory H3 is not tested;
     - "withheld": scores exist, but the cross-check is unfinished or kappa is below 0.6;
     - "none": no scores.
     requested="judge" uses the scores whatever the gate says; the summary flags that."""
@@ -103,12 +111,18 @@ def scope_source(graded_dir: Path, cfg: dict, requested: str = "auto") -> tuple[
         return "none", gate
     if requested == "judge" or gate["status"] == "passed":
         return "judge", gate
+    if gate["status"] == "unevaluable":
+        return "exploratory", gate
     return "withheld", gate
+
+
+EXPLORATORY = "exploratory, unvalidated"   # the label every scope-accuracy number carries without a cross-check
+EXPLORATORY_IS = "exploratory and unvalidated"   # the same, inside a sentence
 
 
 def load_scope(graded_dir: Path, source: str, cfg: dict) -> pd.DataFrame:
     rows = []
-    if source == "judge":
+    if source in ("judge", "exploratory"):
         rows = [{"response_id": k, "score": str(j["score"])} for k, j in G.judge_rows(graded_dir, "main", cfg).items()
                 if j.get("valid")]
     return pd.DataFrame(rows, columns=["response_id", "score"])
@@ -277,7 +291,9 @@ def scope_pairs(df, scope, models, types) -> pd.Series:
     return d.groupby(["model", "pair_id", "claim_type"])["correct"].mean().groupby(["pair_id", "claim_type"]).mean()
 
 
-def primary_family(df, scope, models, types, rng) -> list[dict]:
+def primary_family(df, scope, models, types, rng, h3_untested: str | None = None) -> list[dict]:
+    """The eight primary tests (and the full-sample rows beside them) for one scope and claim-type set.
+    h3_untested names why H3 is not tested when no scores enter it (default: "no scope scores")."""
     rows = []
     both = pair_values(df, models, False, "both")
     conf = pair_values(df, models, False, "both", "confidence")
@@ -304,7 +320,7 @@ def primary_family(df, scope, models, types, rng) -> list[dict]:
         primary=False)
     h3 = one_sample(scope_pairs(df, scope, models, types), 0.5, rng)
     if scope.empty:
-        h3["not_testable"] = "no scope scores"
+        h3["not_testable"] = h3_untested or "no scope scores"
     add("H3", "C1-C4 vs 50%", "share of credential mentions scored 2", "share", h3, "all pairs")
     interp_models = [m for m in models if ((df["model"] == m) & df["interpreter"]).any()]
     res = {**EMPTY, "not_testable": "no interpreter arm"}
@@ -549,9 +565,32 @@ def scope_distribution_table(df, scope, models) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def exploratory_h3(df, scope, models) -> pd.DataFrame:
+    """H3's statistic on the main judge's scores when there is no cross-check judge (DEVIATIONS.md, 15 Nov
+    2026): per reporting scope and claim-type set, outside the Holm family, so p is unadjusted. It draws on
+    its own random stream, so no confirmatory result changes."""
+    rng = np.random.default_rng(SEED + 3)
+    rows = []
+    for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
+        for ctype, types in TYPE_SETS.items():
+            rows.append({"model_scope": scope_name, "claim_type": ctype, "hypothesis": "H3",
+                         "comparison": "C1-C4 vs 50%", "measure": "share of credential mentions scored 2",
+                         "scores": EXPLORATORY, **one_sample(scope_pairs(df, scope, ms, types), 0.5, rng)})
+    return pd.DataFrame(rows)
+
+
+def h3x_row(h3x: pd.DataFrame, scope_name: str, ctype: str) -> dict:
+    if h3x is None or h3x.empty:
+        return {}
+    r = h3x[(h3x["model_scope"] == scope_name) & (h3x["claim_type"] == ctype)]
+    return r.iloc[0].to_dict() if len(r) else {}
+
+
 def h3_verdict(h3: dict) -> tuple[bool, str]:
     """The rev 3.3 rule: supported only if the 95% CI's upper bound for the share scored 2 is below
     0.5 and the Holm-adjusted p is below .05."""
+    if h3 and h3.get("not_testable") == "no cross-check judge":
+        return False, f"H3 was not tested: {REASONS['no cross-check judge']}."
     if not h3 or not h3.get("n_pairs"):
         return False, "H3 could not be evaluated (no scope scores)."
     if not testable(h3) or isnan(h3.get("ci_high")):
@@ -566,17 +605,32 @@ def h3_verdict(h3: dict) -> tuple[bool, str]:
     return False, f"The upper bound of the CI for score 2 ({hi}) is not below 50%, so H3 is not supported."
 
 
+def h3x_sentence(r: dict) -> str:
+    """H3's statistic on the exploratory, unvalidated scores, read against the pre-registered rule but never
+    as a test of H3 (it is outside the Holm family, so its p is unadjusted)."""
+    if not r or not testable(r) or isnan(r.get("ci_high")):
+        return "The share scored 2 could not be compared with 50%" + (f", because {why_not(r)}." if r else ".")
+    hi = pct(min(1.0, r["ci_high"]))
+    side = "below" if r["ci_high"] < 0.5 else "not below"
+    return (f"Read against the pre-registered rule, the upper bound of the 95% CI for score 2 ({hi}) is {side} 50% "
+            f"(one-sample t-test against 50%: p {fmt_p(r.get('p'))}, unadjusted, outside the Holm family); this is "
+            f"an {EXPLORATORY} result, not a test of H3.")
+
+
 def share_ci(r: dict, key: str) -> str:
     """'15% (95% CI 10–19%)'"""
     return f"{pct(r.get(key))} (95% CI {pct(r.get(key + '_ci_low'))}–{pct(r.get(key + '_ci_high'))})"
 
 
-def example_justifications(df, scope, n=6) -> str:
+def example_justifications(df, scope, n=6, label: str = "") -> str:
     """Candidates for the two verbatim examples in §4.5: misattribution in C2 (score 0) and correct
     scope (score 2). Picked deterministically; the author reads them and chooses."""
     lines = ["# Example justifications (candidates for §4.5)", "",
              "Read each one before quoting it: a score of 0 also covers 'treats the credential as support', "
              "so check that the C2 example really attributes the gathered statement to the signer.", ""]
+    if label:
+        lines += [f"> **Scores: {label}.** One judge, no cross-check (`DEVIATIONS.md`, 15 Nov 2026). Quote an "
+                  "example for what the model wrote, and give its score only with this label.", ""]
     if scope.empty:
         return "\n".join(lines + ["_No scope scores yet._"]) + "\n"
     d = df[~df["interpreter"]].merge(scope, on="response_id").sort_values("response_id")
@@ -625,7 +679,8 @@ def _spread(values, gap):
     return pos
 
 
-def figures(out: Path, acc: pd.DataFrame, disc: pd.DataFrame, scope_tab: pd.DataFrame, df: pd.DataFrame) -> list[Path]:
+def figures(out: Path, acc: pd.DataFrame, disc: pd.DataFrame, scope_tab: pd.DataFrame, df: pd.DataFrame,
+            scope_label: str = "") -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -708,7 +763,8 @@ def figures(out: Path, acc: pd.DataFrame, disc: pd.DataFrame, scope_tab: pd.Data
         ax.legend(frameon=False, fontsize=8, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.1))
     else:
         ax.text(0.5, 0.5, "No scope scores yet", ha="center", va="center", color=INK2, transform=ax.transAxes)
-    _style(ax, "Figure 3. Scope accuracy of justifications by condition", "")
+    _style(ax, "Figure 3. Scope accuracy of justifications by condition"
+           + (f" ({scope_label}: one judge)" if scope_label else ""), "")
     ax.grid(False)
     paths.append(_save(fig, out / "fig3_scope_accuracy.png"))
 
@@ -808,7 +864,9 @@ def inner(r, adjusted=True) -> str:
 
 
 REASONS = {"no pairs": "there were no pairs", "no scope scores": "there were no scope scores",
-           "no interpreter arm": "this scope has no interpreter arm"}
+           "no interpreter arm": "this scope has no interpreter arm",
+           "no cross-check judge": "the cross-check judge was dropped (DEVIATIONS.md, 15 Nov 2026), so the "
+                                   "pre-registered agreement gate (§5) could not be evaluated"}
 
 
 def why_not(r: dict) -> str:
@@ -1091,6 +1149,15 @@ def build_slots(ctx: dict) -> dict:
     dist = ctx["h3_dist"]
     if ctx.get("scope_withheld"):
         s["H3_SENTENCE"] = ctx["scope_withheld"]
+    elif ctx.get("h3x") is not None and dist.get("n_judged"):   # no cross-check judge (DEVIATIONS.md, 15 Nov 2026)
+        s["H3_SENTENCE"] = (
+            f"Scope accuracy is {EXPLORATORY_IS}: one judge scored it, and the pre-registered cross-check was dropped "
+            "(`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. "
+            f"Of the {dist['n_judged']} judged C1–C4 justifications on real-obscure pairs, {share_ci(dist, 'mention')} "
+            f"mentioned the credential. Of those, {share_ci(dist, 'share_2')} described its scope correctly "
+            f"(score 2), {share_ci(dist, 'share_1')} did so partially (1), and {share_ci(dist, 'share_0')} treated "
+            f"it as support for the claim or misattributed it (0); CIs over {dist['n_pairs']} pairs. "
+            + h3x_sentence(ctx["h3x"]))
     elif h3.get("n_pairs") and dist.get("n_judged"):
         s["H3_SENTENCE"] = (
             f"Of the {dist['n_judged']} judged C1–C4 justifications on real-obscure pairs, {share_ci(dist, 'mention')} "
@@ -1294,23 +1361,33 @@ def judge_text(cfg: dict) -> str:
     j = J.judge_config(cfg, "main")
     if not j.get("model_id"):
         return "[the judges are not chosen yet: judges.main.model_id in models.yaml]"
+    if j.get("provider") == "adaption":
+        return (f"`{j['model_id']}` via Adaption (temperature {j.get('temperature', 0.0):g}, the provider's default "
+                "reasoning, blind to model, condition and truth)")
     route = ((j.get("route") or {}).get("order") or ["?"])[0]
     return (f"`{j['model_id']}` via OpenRouter, served by {route} (temperature {j.get('temperature', 0.0):g}, blind to "
             "model, condition and truth)")
 
 
 def kappa_text(gate: dict, cfg: dict) -> str:
-    """Agreement between the two judges (§5, rev 3.4), for the KAPPA slot."""
+    """The KAPPA slot of §3.4: the cross-check and the judges' agreement (§5, rev 3.4), in whole
+    sentences, or why there is none (DEVIATIONS.md, 15 Nov 2026)."""
+    if J.crosscheck_dropped(cfg) and gate.get("status") in ("unevaluable", "none"):
+        return ("The pre-registered cross-check by a second judge was dropped (`DEVIATIONS.md`), so the agreement "
+                "gate (judge results reported only if the two judges' linear-weighted kappa is at least 0.6) could "
+                f"not be evaluated: confirmatory H3 was not tested, and every scope-accuracy number is {EXPLORATORY_IS}.")
+    lead = "A free model from another family scored 100 of them with the same prompt; agreement between the two judges: "
+    rule = " Judge results are reported only if the overall weighted kappa is at least 0.6."
     o = gate.get("overall") or {}
     if not o.get("n_items"):
-        return "not computed yet: the cross-check judge has not scored any response"
+        return lead + "not computed yet: the cross-check judge has not scored any response." + rule
     c = J.judge_config(cfg, "crosscheck")
     who = f"`{c['model_id']}`" if c.get("model_id") else "the cross-check judge"
     fams = ", ".join(f"{k} {num(v.get('weighted_kappa_linear'), 2)} (n = {v.get('n_both_scored')})"
                      for k, v in gate.get("by_family", {}).items())
-    return (f"linear-weighted κ = {num(o.get('weighted_kappa_linear'), 2)} between the judge and {who} on the "
+    return (lead + f"linear-weighted κ = {num(o.get('weighted_kappa_linear'), 2)} between the judge and {who} on the "
             f"{o.get('n_both_scored')} responses both scored 0–2, of {gate.get('n_crosschecked')} cross-checked; "
-            f"exact agreement {pct(o.get('exact_agreement'))}; by study-model family: {fams}")
+            f"exact agreement {pct(o.get('exact_agreement'))}; by study-model family: {fams}." + rule)
 
 
 def withheld_text(gate: dict) -> str:
@@ -1337,11 +1414,17 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     source, gate = scope_source(graded_dir, cfg, scope_req)
     forced = source == "judge" and gate["status"] != "passed"
     scope = load_scope(graded_dir, source, cfg)
+    # Without a cross-check judge (DEVIATIONS.md, 15 Nov 2026) the confirmatory H3 gets no scores: it is not
+    # tested and enters Holm with p = 1. The scores feed only the exploratory numbers, each labelled so.
+    exploratory = source == "exploratory"
+    h3_scope = scope.iloc[0:0] if exploratory else scope
+    h3_untested = "no cross-check judge" if exploratory else None
+    label = EXPLORATORY if exploratory else ""
 
     fam, all_rows = {}, []
     for scope_name, ms in [("pooled", models)] + [(m, [m]) for m in models]:
         for ctype, types in TYPE_SETS.items():
-            rows = primary_family(df, scope, ms, types, rng)
+            rows = primary_family(df, h3_scope, ms, types, rng, h3_untested)
             for r in rows:
                 r.update(model_scope=scope_name, claim_type=ctype)
             fam[(scope_name, ctype)] = rows
@@ -1352,6 +1435,9 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     tests = pd.DataFrame(all_rows)
     tests = tests[lead + [c for c in tests.columns if c not in lead]]
     tests.to_csv(out / "primary_tests.csv", index=False)
+    h3x = exploratory_h3(df, scope, models) if exploratory else pd.DataFrame()
+    if exploratory:
+        h3x.to_csv(out / "h3_exploratory.csv", index=False)
 
     # H1 on false twins alone and H5: with the C0-ceiling rule, and the full-sample result beside each (§7)
     ceil, false_only = ceiling_pairs(df, models), pair_values(df, models, False, False)
@@ -1375,11 +1461,12 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     rates.to_csv(out / "citation_abstention_confidence.csv", index=False)
     confidence_delta_table(df).to_csv(out / "confidence_delta.csv", index=False)
     stab = scope_table(df, scope)
-    stab.to_csv(out / "scope_accuracy.csv", index=False)
     sdist = scope_distribution_table(df, scope, models)
-    sdist.to_csv(out / "scope_distribution.csv", index=False)
+    for frame, name in ((stab, "scope_accuracy.csv"), (sdist, "scope_distribution.csv")):
+        (frame.assign(scores=label) if label else frame).to_csv(out / name, index=False)
     rep_variance_table(df).to_csv(out / "rep_variance.csv", index=False)
-    (out / "example_justifications.md").write_text(example_justifications(df, scope), encoding="utf-8", newline="\n")
+    (out / "example_justifications.md").write_text(example_justifications(df, scope, label=label), encoding="utf-8",
+                                                    newline="\n")
 
     pf_path = Path(graded_dir) / "parse_failures.csv"
     pf = {r["model"]: r for r in G.read_csv(pf_path)} if pf_path.exists() else {}
@@ -1399,13 +1486,15 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
         row.update({"scope_correct_share": model_scope_correct(df, scope, m),
                     "parse_failed_rate": pf.get(m, {}).get("parse_failed_rate", ""),
                     "cost_usd": pf.get(m, {}).get("cost_usd", "")})
+        if label:
+            row["scope_scores"] = label
         per_model.append(row)
     per_model_df = pd.DataFrame(per_model)
     per_model_df.to_csv(out / "per_model.csv", index=False)
     pf = parse_failure_outputs(raw_dir, models, out)
-    rob = robustness_outputs(df, scope, models, fam, out)   # exploratory (DEVIATIONS.md)
+    rob = robustness_outputs(df, h3_scope, models, fam, out, h3_untested=h3_untested)   # exploratory (DEVIATIONS.md)
     caveats = h4_caveats(pf, fam)
-    fig_paths = figures(out, acc, disc, stab, df)
+    fig_paths = figures(out, acc, disc, stab, df, scope_label=label)
 
     pooled_acc = acc[acc["model"] == "pooled"]
     c0 = {}
@@ -1429,7 +1518,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
                         + f"; parse-failure rates: {pf_text})")
     in_df = set(df["response_id"])
     n_scored = sum(1 for k, j in G.judge_rows(graded_dir, "main", cfg).items() if j.get("valid") and k in in_df)
-    scope_md = dist_table_md(sdist, "real_obscure")
+    scope_md = dist_table_md(sdist, "real_obscure", label)
     citation_md = table_md(rates[rates["scope"] == "pooled"] if not rates.empty else rates,
                            ["condition", "n", "credential_citation_rate", "abstention_rate", "mean_confidence"],
                            ["Condition", "n", "credential-citation rate", "abstention rate", "mean confidence"],
@@ -1439,7 +1528,8 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
            "settings": settings_text, "models_paragraph": models_paragraph, "judge_model": judge_text(cfg),
            "n_judged": str(n_scored), "kappa": kappa_text(gate, cfg), "scope_md": scope_md, "citation_md": citation_md,
            "h3_dist": dist_row(sdist, "pooled", "real_obscure", "C1–C4"),
-           "scope_withheld": withheld_text(gate) if source == "withheld" else "", "h4_caveats": caveats}
+           "scope_withheld": withheld_text(gate) if source == "withheld" else "", "h4_caveats": caveats,
+           "h3x": h3x_row(h3x, "pooled", "real_obscure") if exploratory else None}
     slots = build_slots(ctx)
     draft_text = Path(draft).read_text(encoding="utf-8") if Path(draft).exists() else ""
     entries = placeholder_entries(draft_text, slots)
@@ -1447,7 +1537,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
     notes = draft_notes(draft_text)
     summary = render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, setting_problems, sdist, notes,
                              gate=gate, forced=forced, pf=pf, rob=rob, caveats=caveats,
-                             baseline=baseline_section(c0tab, c0, fam, models))
+                             baseline=baseline_section(c0tab, c0, fam, models), h3x=h3x, judge=ctx["judge_model"])
     (out / "results_summary.md").write_text(summary, encoding="utf-8", newline="\n")
     if draft_text:
         banner = ("<!-- AUTO-FILLED PREVIEW written by src/analyse.py"
@@ -1456,7 +1546,7 @@ def analyse(raw_dir: Path, graded_dir: Path, out: Path, pilot_dir: Path, draft: 
         (out / "REPORT_DRAFT.filled.md").write_text(banner + filled_draft(draft_text, entries), encoding="utf-8",
                                                      newline="\n")
     return {"entries": entries, "slots": slots, "tests": tests, "out": out, "h5": h5r, "h5_full": h5f, "fam": fam,
-            "rob": rob, "caveats": caveats, "c0_table": c0tab,
+            "rob": rob, "caveats": caveats, "c0_table": c0tab, "h3_exploratory": h3x,
             "source": source, "gate": gate, "forced": forced, "figures": fig_paths, "problems": setting_problems}
 
 
@@ -1467,7 +1557,7 @@ def dist_row(sdist: pd.DataFrame, scope_name: str, ctype: str, conds: str) -> di
     return r.iloc[0].to_dict() if len(r) else {}
 
 
-def dist_table_md(sdist: pd.DataFrame, ctype: str) -> str:
+def dist_table_md(sdist: pd.DataFrame, ctype: str, label: str = "") -> str:
     """Scope distribution by condition (pooled models) with 95% CIs over pairs."""
     rows = sdist[(sdist["scope"] == "pooled") & (sdist["claim_type"] == ctype)] if not sdist.empty else sdist
     if rows is None or rows.empty or not rows["n_judged"].any():
@@ -1475,7 +1565,8 @@ def dist_table_md(sdist: pd.DataFrame, ctype: str) -> str:
     cell = {k: (lambda key: lambda r: f"{pct(r[key])} ({pct(r[key + '_ci_low'])}–{pct(r[key + '_ci_high'])})")(k)
             for k in ("mention", "share_0", "share_1", "share_2")}
     caption = {"real_obscure": "Real-obscure pairs", "invented": "Invented pairs", "all": "All pairs"}[ctype]
-    out = [f"{caption}, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; "
+    out = [(f"**{label[0].upper() + label[1:]}** (one judge, no cross-check). " if label else "")
+           + f"{caption}, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; "
            "95% CIs over pairs.", "",
            "| Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | "
            "2: correct scope |", "|---|---|---|---|---|---|"]
@@ -1599,7 +1690,7 @@ def outcome(conclusions) -> str:
     return "same" if len(set(have)) == 1 else "changes"
 
 
-def without_model(df, scope, models, fam, drop) -> pd.DataFrame:
+def without_model(df, scope, models, fam, drop, h3_untested=None) -> pd.DataFrame:
     """Exploratory check 1: every primary test on the pooled data without `drop`, beside the pooled
     result with it. The whole procedure is re-run on the remaining models."""
     kept = [m for m in models if m != drop]
@@ -1607,7 +1698,7 @@ def without_model(df, scope, models, fam, drop) -> pd.DataFrame:
         return pd.DataFrame()
     rows = []
     for ctype, types in TYPE_SETS.items():
-        alt = primary_family(df, scope, kept, types, np.random.default_rng(SEED))
+        alt = primary_family(df, scope, kept, types, np.random.default_rng(SEED), h3_untested)
         for b in (r for r in fam[("pooled", ctype)] if r["primary"]):
             a = find(alt, b["hypothesis"], b["comparison"], b["measure"])
             rows.append({"claim_type": ctype, "test": label_of(b), "hypothesis": b["hypothesis"],
@@ -1629,7 +1720,7 @@ def with_failed_set(df, model, accepted: float) -> pd.DataFrame:
     return d
 
 
-def failure_bounds(df, scope, fam, model) -> pd.DataFrame:
+def failure_bounds(df, scope, fam, model, h3_untested=None) -> pd.DataFrame:
     """Exploratory check 2: `model`'s primary tests re-run twice, with all its parse-failed cells set
     to accept = false and then to accept = true, beside the pre-registered result (failures missing)."""
     if (model, "all") not in fam:
@@ -1637,8 +1728,8 @@ def failure_bounds(df, scope, fam, model) -> pd.DataFrame:
     low, high = with_failed_set(df, model, 0.0), with_failed_set(df, model, 1.0)
     rows = []
     for ctype, types in TYPE_SETS.items():
-        lo = primary_family(low, scope, [model], types, np.random.default_rng(SEED))
-        hi = primary_family(high, scope, [model], types, np.random.default_rng(SEED))
+        lo = primary_family(low, scope, [model], types, np.random.default_rng(SEED), h3_untested)
+        hi = primary_family(high, scope, [model], types, np.random.default_rng(SEED), h3_untested)
         for b in (r for r in fam[(model, ctype)] if r["primary"]):
             f, t = (find(x, b["hypothesis"], b["comparison"], b["measure"]) for x in (lo, hi))
             cs = (conclusion(b), conclusion(f), conclusion(t))
@@ -1653,10 +1744,11 @@ def failure_bounds(df, scope, fam, model) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def robustness_outputs(df, scope, models, fam, out: Path, model: str = ROBUSTNESS_MODEL) -> dict:
+def robustness_outputs(df, scope, models, fam, out: Path, model: str = ROBUSTNESS_MODEL, h3_untested=None) -> dict:
     if model not in models:
         return {}
-    w, b = without_model(df, scope, models, fam, model), failure_bounds(df, scope, fam, model)
+    w = without_model(df, scope, models, fam, model, h3_untested)
+    b = failure_bounds(df, scope, fam, model, h3_untested)
     w.to_csv(out / "robustness_without_qwen.csv", index=False)
     b.to_csv(out / "robustness_qwen_bounds.csv", index=False)
     g = df[df["model"] == model]
@@ -1781,6 +1873,8 @@ def gate_line(gate: dict | None) -> str:
             "failed": f"the judges' weighted kappa is {k} on {n} responses, below 0.6: judge results are withheld",
             "pending": f"the cross-check has {g.get('n_crosschecked', 0)} of {g.get('n_sample') or 100} responses: judge "
                        "results are withheld until the kappa is known",
+            "unevaluable": "no cross-check judge (dropped: DEVIATIONS.md, 15 Nov 2026), so the §5 gate cannot be "
+                           f"evaluated: the main judge's scores are {EXPLORATORY_IS}, and confirmatory H3 is not tested",
             "none": "no main-judge scores yet"}[g.get("status", "none")]
 
 
@@ -1866,7 +1960,8 @@ def baseline_section(c0tab: pd.DataFrame, c0: dict, fam: dict, models) -> list[s
 
 
 def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, problems, sdist, notes=(),
-                   gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=()) -> str:
+                   gate=None, forced=False, pf=None, rob=None, caveats=(), baseline=(), h3x=None, judge="") -> str:
+    scope_label = EXPLORATORY if source == "exploratory" else ""
     lines = ["# Results summary", ""]
     if synthetic:
         lines += ["> **SYNTHETIC DATA. Nothing here is a result.**", ""]
@@ -1876,6 +1971,11 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     if forced:
         lines += ["> **JUDGE RESULTS FORCED (`--scope-source judge`).** The pre-registered gate (§5, rev 3.4) has not "
                   "passed, so none of the scope-accuracy numbers below may be reported as results.", ""]
+    if scope_label:
+        lines += [f"> **Scope accuracy is {EXPLORATORY_IS}.** One judge ({judge or 'the main judge'}) scored the sample. The "
+                  "pre-registered cross-check judge was dropped (`DEVIATIONS.md`, 15 Nov 2026), so the §5 agreement "
+                  "gate cannot be evaluated: confirmatory H3 is not tested and enters Holm with p = 1. Every "
+                  "scope-accuracy number below, and in the CSVs, Figure 3 and the examples, carries this label.", ""]
     stamps = sorted(t for t in df["timestamp_utc"] if t)
     if stamps:
         lines += [f"Responses collected from {stamps[0][:16].replace('T', ' ')} to {stamps[-1][:16].replace('T', ' ')} "
@@ -1916,6 +2016,10 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     if source == "withheld":
         lines += ["- §3.4 and §4.5: judge results are withheld (" + gate_line(gate) + "). Give the kappa, say that H3 "
                   "was not tested, and leave out the scope-accuracy table and examples."]
+    if scope_label:
+        lines += [f"- §3.4, §4.5 and Appendix A: scope accuracy is {EXPLORATORY_IS} (one judge, no cross-check: "
+                  "`DEVIATIONS.md`). Keep that label beside every scope-accuracy number, table, figure and example, "
+                  "say that confirmatory H3 was not tested, and keep the Appendix A limitation."]
     lines += [""]
     flags = []
     for key, hyps in ((("pooled", "real_obscure"), ("H1", "H2", "H2b", "H3")), (("pooled", "all"), ("H4",))):
@@ -1955,13 +2059,31 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               "n pairs its smallest possible p is 2/2^n, so it needs at least 9 pairs to reach p_holm < 0.05 over "
               "eight tests. `primary_tests.csv` has every model and claim type.", ""]
     h3 = find(fam[("pooled", "real_obscure")], "H3", "C1-C4 vs 50%", "share of credential mentions scored 2")
-    verdict = (f"Judge results are withheld: {withheld_text(gate or {})}" if source == "withheld" else
-               f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}")
-    lines += ["## Scope accuracy (H3)", "",
+    if scope_label:
+        verdict = (f"Confirmatory H3: **NOT TESTED**. {h3_verdict(h3)[1]} It enters Holm with p = 1. Exploratory and "
+                   "unvalidated, on real-obscure pairs pooled over models: "
+                   + h3x_sentence(h3x_row(h3x, "pooled", "real_obscure")))
+    elif source == "withheld":
+        verdict = f"Judge results are withheld: {withheld_text(gate or {})}"
+    else:
+        verdict = f"Real-obscure pairs: **{'SUPPORTED' if h3_verdict(h3)[0] else 'NOT SUPPORTED'}**. {h3_verdict(h3)[1]}"
+    lines += [f"## Scope accuracy (H3){': ' + scope_label if scope_label else ''}", "",
               "Rule (§7, rev 3.3): H3 is supported only if the upper bound of the 95% CI for the share of "
               "credential-mentioning justifications scored 2 is below 50% and its p_holm is below .05. Rev 3.4 (§5): "
               "judge results are reported only if the two judges' weighted kappa is at least 0.6; otherwise H3 is "
               f"not tested and enters Holm with p = 1. Now: {gate_line(gate)}. {verdict}", ""]
+    if scope_label and h3x is not None and not h3x.empty:
+        rows_x = []
+        for r in h3x.to_dict("records"):
+            n = int(r["n_pairs"]) if r["n_pairs"] == r["n_pairs"] else 0
+            tail = (f"{pct(r['ci_low'])}–{pct(r['ci_high'])} | {fmt_p(r['p'])} |" if testable(r)
+                    else f"– | not testable: {why_short(r)} |")
+            rows_x.append(f"| {r['model_scope']} | {TYPE_LABEL[r['claim_type']]} | {n} | {pct(r['delta'])} | {tail}")
+        lines += [f"**H3's statistic on the {scope_label} scores**, per reporting scope: the share of credential-mentioning "
+                  "C1–C4 justifications scored 2, computed per pair (models weighted equally), against 50%. It is "
+                  "outside the Holm family, so p is unadjusted (`h3_exploratory.csv`).", "",
+                  "| Scope | Pairs | n pairs | share scored 2 | 95% CI | p vs 50% (unadjusted) |",
+                  "|---|---|---|---|---|---|", *rows_x, ""]
     if gate and (gate.get("overall") or {}).get("n_items"):
         o = gate["overall"]
         lines += [f"Judges' agreement on the cross-check sample: linear-weighted kappa {num(o['weighted_kappa_linear'], 2)} "
@@ -1971,9 +2093,9 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
                   + ", ".join(f"{f} {num(v['weighted_kappa_linear'], 2)} (n = {v['n_both_scored']})"
                               for f, v in gate.get("by_family", {}).items()) + ".", ""]
     for ctype in ("real_obscure", "invented", "all"):
-        lines += [dist_table_md(sdist, ctype), ""]
+        lines += [dist_table_md(sdist, ctype, scope_label), ""]
     lines += ["Per model: `scope_distribution.csv`. Figure 3 shows raw shares of all judged justifications, "
-              "including those that do not mention the credential.", ""]
+              "including those that do not mention the credential" + (f"; it is {EXPLORATORY_IS} too." if scope_label else "."), ""]
     def pm_cell(r, key) -> str:
         """The pre-registered test (n/t if not testable; n/a if it has no pairs by design), then the full sample."""
         if r.get(f"{key}_testable"):
@@ -1990,7 +2112,7 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
         **{name: [pm_cell(r, key) for r in recs] for name, key in (
             ("H1 C1−C0", "h1_c1_vs_c0_real"), ("H2 C3−C2", "h2_c3_vs_c2_real"), ("H2 C4−C1", "h2_c4_vs_c1_real"),
             ("H2b index C5−C0", "h2b_disc_c5_vs_c0_real"), ("H4 interpreter−none", "h4_interpreter_all"))},
-        "scope: share scored 2": per_model_df["scope_correct_share"].map(pct),
+        "scope: share scored 2" + (" (exploratory)" if scope_label else ""): per_model_df["scope_correct_share"].map(pct),
         "parse failures": per_model_df["parse_failed_rate"].map(lambda v: pct(v, 1)),
         "cost USD": per_model_df["cost_usd"].map(lambda v: num(v, 2))})
     lines += h4_section(fam, list(per_model_df["model"]), caveats)
@@ -2002,7 +2124,8 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
               table_md(shown, list(shown.columns), list(shown.columns)), ""]
     pm = {r["model"]: r for r in recs}
     if {"gpt-oss-120b", "gpt-oss-20b"} <= set(pm):
-        lines += [f"**Scale within family (§6).** Share of credential mentions scored 2: "
+        lines += [f"**Scale within family (§6).** Share of credential mentions scored 2"
+                  + (f" ({scope_label})" if scope_label else "") + ": "
                   f"{pct(pm['gpt-oss-120b']['scope_correct_share'])} for gpt-oss-120b vs "
                   f"{pct(pm['gpt-oss-20b']['scope_correct_share'])} for gpt-oss-20b. C1 − C0 on real-obscure pairs, "
                   f"pre-registered test / full sample: {pm_cell(pm['gpt-oss-120b'], 'h1_c1_vs_c0_real')} vs "
@@ -2012,15 +2135,19 @@ def render_summary(entries, fam, per_model_df, raw_dir, source, df, synthetic, p
     lines += ["## Files", "", "| File | Contents |", "|---|---|",
               "| `fig1_acceptance.png` | Figure 1 (§4.2): acceptance by condition, claim type and truth |",
               "| `fig2_discrimination.png` | Figure 2 (§4.4): discrimination index by condition |",
-              "| `fig3_scope_accuracy.png` | Scope scores by condition (§4.5) |",
+              "| `fig3_scope_accuracy.png` | Scope scores by condition (§4.5)" + (f"; {scope_label}" if scope_label else "") + " |",
               "| `fig4_interpreter.png` | Interpreter arm (§4.7) |",
               "| `primary_tests.csv` | Every primary test per model scope and claim type, with Holm |",
               "| `acceptance_by_condition.csv` | Acceptance per model, claim type, truth and condition, plus pooled |",
               "| `discrimination_by_condition.csv` | Discrimination index, with floor and ceiling pair counts |",
               "| `citation_abstention_confidence.csv` | Credential-citation rate, abstention rate, mean confidence |",
               "| `confidence_delta.csv` | Confidence minus the same item's C0 mean |",
-              "| `scope_accuracy.csv` | Raw scope score counts per condition (Figure 3) |",
-              "| `scope_distribution.csv` | H3: mention share and 0/1/2 shares with 95% CIs, per scope and claim type |",
+              "| `scope_accuracy.csv` | Raw scope score counts per condition (Figure 3)" + (f"; {scope_label}" if scope_label else "")
+              + " |",
+              "| `scope_distribution.csv` | H3: mention share and 0/1/2 shares with 95% CIs, per scope and claim type"
+              + (f"; {scope_label}" if scope_label else "") + " |",
+              *([f"| `h3_exploratory.csv` | H3's statistic on the {scope_label} scores, per scope and claim type, outside the "
+                 "Holm family |"] if scope_label else []),
               "| `h5_unrecognised_sources.csv` | H5 (exploratory): with the C0-ceiling rule, and the full sample |",
               "| `c0_acceptance.csv` | C0 acceptance per model and claim type, and the pairs at the C0 ceiling per scope |",
               "| `rep_variance.csv` | Repetition variance (§7) |",
@@ -2055,6 +2182,9 @@ def main(argv=None) -> int:
           f"automatically, {len(missing)} need a hand fill")
     if res["forced"]:
         print("  JUDGE RESULTS FORCED: the pre-registered gate has not passed; do not report them")
+    if res["source"] == "exploratory":
+        print(f"  EXPLORATORY: every scope-accuracy number is {EXPLORATORY_IS} (one judge, no cross-check); "
+              "confirmatory H3 is not tested; h3_exploratory.csv holds H3's statistic outside the Holm family")
     for e in missing:
         print(f"  by hand: {e['placeholder'][:70]} (line {e['line']})")
     for p in res["problems"]:
