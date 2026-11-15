@@ -15,7 +15,7 @@ from src import runner as R
 from src import synthetic as S
 from src.providers import openrouter
 from src.providers.common import HttpResult
-from tests.test_pilot_judge import CROSS_ID, MAIN_ID, FakeJudge, judge_ok, judges_config
+from tests.test_pilot_judge import CROSS_ID, MAIN_ID, FakeJudge, judge_ok, judges_config, unchosen_config
 
 
 @pytest.fixture
@@ -118,8 +118,9 @@ def test_main_judge_is_concurrent_resumable_and_blind(dirs, monkeypatch, capsys)
 def test_judges_refuse_until_they_are_chosen(dirs, monkeypatch, capsys):
     fake = FakeJudge()
     monkeypatch.setattr(openrouter, "send", fake)
-    assert grade(dirs, "--judge", config=R.REPO / "models.yaml") == 1
-    assert grade(dirs, "--crosscheck", config=R.REPO / "models.yaml") == 1
+    unchosen = unchosen_config(dirs["tmp"])
+    assert grade(dirs, "--judge", config=unchosen) == 1
+    assert grade(dirs, "--crosscheck", config=unchosen) == 1
     assert fake.calls == [] and "has not been chosen yet" in capsys.readouterr().out
 
 

@@ -1,4 +1,5 @@
-"""Scope-accuracy judges (PREREGISTRATION.md §5, rev 3.4): one blind call per response, via OpenRouter.
+"""Scope-accuracy judges (PREREGISTRATION.md §5, rev 3.4): one blind call per response. Planned on
+OpenRouter; since 15 Nov 2026 (DEVIATIONS.md) the main judge runs on Adaption (glm-5.2).
 
 The judge sees what the credential certified (rendered from the manifest by the same code as the
 interpreter), the statement and the model's justification. It never sees the study model, the
@@ -12,7 +13,8 @@ JudgeRun sends requests concurrently and:
 - on a re-run, skips responses that the same model has already judged.
 
 It stops cleanly on Ctrl+C, at a daily call cap counted per UTC day from the attempts file (the
-free model's limit), at a spend cap, or when the provider rejects the request.
+free model's limit), at a spend cap, or when the provider rejects the request. Spend is counted in
+the provider's COST_UNIT: USD on OpenRouter, credits on Adaption.
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ SCHEMA = {"type": "object",
           "properties": {"score": {"type": "string", "enum": list(SCORES)}, "reason": {"type": "string"}},
           "required": ["score", "reason"], "additionalProperties": False}
 ROLES = ("main", "crosscheck")
+JUDGE_PROVIDERS = ("openrouter", "adaption")
 # §5: no judge from a study model's developer (OpenAI incl. gpt-oss, Qwen/Alibaba, Google), and no
 # router or unnamed model (OpenRouter lists both under its own "openrouter/" prefix).
 EXCLUDED_IDS = ("openai/", "gpt-oss", "qwen", "qwq", "alibaba", "google/", "gemma", "gemini", "openrouter/")
@@ -132,12 +135,14 @@ def config_problems(cfg: dict, role: str) -> list[str]:
                 "(pre-registration §5)."]
     low = mid.lower()
     out = []
-    if j.get("provider") != "openrouter":
-        out.append(f"judges.{role}.provider must be openrouter.")
+    if j.get("provider") not in JUDGE_PROVIDERS:
+        out.append(f"judges.{role}.provider must be one of: {', '.join(JUDGE_PROVIDERS)}.")
     hit = [x for x in EXCLUDED_IDS if x in low]
     if hit:
         out.append(f"{mid} is excluded by §5 (matches {', '.join(hit)}): no OpenAI or gpt-oss, Qwen or Alibaba, "
                    "Google, router or unnamed model.")
+    if j.get("provider") == "adaption" and low.startswith("stack:"):
+        out.append(f"{mid} is an Adaption inference stack (its own tools and memory), not a named model (§5).")
     fam = str(j.get("family") or "").lower()
     if not fam:
         out.append(f"judges.{role}.family is empty: record the model family when choosing the judge.")
@@ -218,7 +223,10 @@ class JudgeRun:
         self.timeout = float(jcfg.get("request_timeout_s", 180))
         lim = jcfg.get("limits") or {}
         self.day_cap = lim.get("rpd")
-        self.budget = jcfg.get("budget_usd")
+        self.unit = getattr(self.provider, "COST_UNIT", "USD")
+        self.cost_key = f"cost_{self.unit.lower()}"      # cost_usd on OpenRouter, cost_credits on Adaption
+        self.budget_key = f"budget_{self.unit.lower()}"
+        self.budget = jcfg.get(self.budget_key)
         self.lock = threading.Lock()       # counters
         self.file_lock = threading.Lock()  # appends: one writer at a time, so lines never interleave
         self.stop = threading.Event()
@@ -231,11 +239,14 @@ class JudgeRun:
                  if a.get("judge_model_id") == self.model_id and a.get("utc_date")]
         self.day = R.utcnow().date().isoformat()
         self.calls_today = sum(1 for a in prior if a["utc_date"] == self.day)
-        self.spent = sum(float(a.get("cost_usd") or 0.0) for a in prior)
+        self.spent = sum(float(a.get(self.cost_key) or 0.0) for a in prior)
         self.calls_this_run = 0
         self.new_rows: list[dict] = []
         self.interrupted = False
         self.total = self.before = 0
+
+    def money(self, x: float, places: int = 4) -> str:
+        return f"${x:.{places}f}" if self.unit == "USD" else f"{x:.{places}f} {self.unit}"
 
     # -- shared state
 
@@ -260,8 +271,8 @@ class JudgeRun:
                     self._halt(f"daily cap reached: {self.calls_today} calls to {self.model_id} on {self.day} UTC "
                                f"(cap {self.day_cap}). Resume after {RESUME}", "day")
                 elif self.budget is not None and self.spent > float(self.budget):
-                    self._halt(f"spend cap passed: ${self.spent:.4f} against ${float(self.budget):.2f} for {self.model_id} "
-                               "(judges.<role>.budget_usd in models.yaml)", "budget")
+                    self._halt(f"spend cap passed: {self.money(self.spent)} against {self.money(float(self.budget), 2)} "
+                               f"for {self.model_id} (judges.<role>.{self.budget_key} in models.yaml)", "budget")
                 else:
                     self.calls_today += 1
                     self.calls_this_run += 1
@@ -275,7 +286,7 @@ class JudgeRun:
         rec = {"timestamp_utc": sent.isoformat(), "utc_date": sent.date().isoformat(), "stage": self.stage,
                "role": self.role, "judge_model_id": self.model_id, "route": self.cfg.get("route"),
                "response_id": item.response_id, "attempt": attempt, "status": res.status, "outcome": outcome,
-               "action": action, "latency_s": round(res.latency_s or 0.0, 3), "cost_usd": cost,
+               "action": action, "latency_s": round(res.latency_s or 0.0, 3), self.cost_key: cost,
                "error": res.error or (err.get("message") if isinstance(err, dict) else None),
                "headers": {h: res.headers[h] for h in self.provider.RATE_HEADERS if h in (res.headers or {})}}
         if comp is not None:
@@ -299,7 +310,7 @@ class JudgeRun:
                "generation_id": comp.extra.get("id"), **item.meta,
                "score": score, "reason": reason, "valid": score is not None, "parse_error": perr,
                "raw_text": comp.text, "reasoning_text": comp.reasoning, "finish_reason": comp.finish_reason,
-               "usage": comp.usage, "cost_usd": cost, "latency_s": round(res.latency_s or 0.0, 3),
+               "usage": comp.usage, self.cost_key: cost, "latency_s": round(res.latency_s or 0.0, 3),
                "http_status": res.status, "attempts": attempts, "temperature": payload.get("temperature"),
                "reasoning_setting": self.provider.reasoning_setting(self.cfg),
                "request": {"endpoint": self.provider.endpoint(self.cfg), "body": payload}}
@@ -316,7 +327,7 @@ class JudgeRun:
                 cap = f" | calls today {self.calls_today}/{self.day_cap} (UTC)" if self.day_cap else ""
                 spent = self.spent
             self.say(f"  [{self.role} judge] {self.before + k}/{self.total} judged (this run {k}, valid {valid}) | "
-                     f"${spent:.4f} spent{cap}")
+                     f"{self.money(spent)} spent{cap}")
 
     # -- one response
 
@@ -340,7 +351,7 @@ class JudgeRun:
             if res.status == 200 and err is None:
                 comp = self.provider.extract(res.body)
                 parsed = parse_judgement(comp.text)
-                cost = self.provider.cost_usd(comp.usage)
+                cost = self.provider.cost_usd(comp.usage, self.cfg)   # in self.unit
                 with self.lock:
                     self.spent += cost
                 self._log(item, attempt, res, sent, "ok" if parsed[0] else "invalid", comp=comp, cost=cost)
@@ -351,7 +362,7 @@ class JudgeRun:
                 limited += 1
                 if rl.scope == "day":
                     self._fail(item, attempt, res, sent, "daily limit: stopping")
-                    self._halt(f"OpenRouter reports that today's limit for {self.model_id} is used up. "
+                    self._halt(f"{self.provider.LABEL} reports that today's limit for {self.model_id} is used up. "
                                f"Resume after {RESUME}", "day")
                     raise JudgeStop(self.stop_reason)
                 if limited > MAX_RATE_LIMITED:
@@ -364,8 +375,8 @@ class JudgeRun:
                 continue
             if res.status == 402:
                 self._fail(item, attempt, res, sent, "insufficient credits: stopping")
-                self._halt("OpenRouter reports insufficient credits (HTTP 402). Add credit at "
-                           "openrouter.ai/settings/credits, then re-run", "credits")
+                self._halt(f"{self.provider.LABEL} reports insufficient credits (HTTP 402). {self.provider.CREDITS_HINT}",
+                           "credits")
                 raise JudgeStop(self.stop_reason)
             if res.status == 200 or res.status is None or res.status in (408, 409) or res.status >= 500:
                 transient += 1
@@ -435,4 +446,5 @@ class JudgeRun:
                 "remaining": self.total - self.before - len(self.new_rows), "stop_reason": self.stop_reason,
                 "stop_kind": self.stop_kind,
                 "interrupted": self.interrupted, "calls_this_run": self.calls_this_run,
-                "calls_today": self.calls_today, "day_cap": self.day_cap, "spent_usd": round(self.spent, 6)}
+                "calls_today": self.calls_today, "day_cap": self.day_cap, "spent": round(self.spent, 6),
+                "cost_unit": self.unit, "spent_text": self.money(self.spent)}

@@ -266,11 +266,12 @@ def run_judge(cfg, graded_dir: Path, role: str = "main", limit=None, force=False
     run = J.JudgeRun(jcfg, role, key, out, attempts, stage=role, say=say)
     already = len(set(ids) & set(J.judged(out, jcfg["model_id"])))
     cap = f"; calls so far today {run.calls_today} of {run.day_cap} (UTC day)" if run.day_cap else ""
-    say(f"{LABEL[role]} {jcfg['model_id']} via {jcfg['route']['order'][0]}: sample {len(ids)}; already judged "
+    via = ((jcfg.get("route") or {}).get("order") or [jcfg.get("provider")])[0]
+    say(f"{LABEL[role]} {jcfg['model_id']} via {via}: sample {len(ids)}; already judged "
         f"{already}; to judge {len(ids) - already}{cap}. Ctrl+C stops cleanly.")
     s = run.run(items, limit)
     say(f"{LABEL[role]}: {s['judged_now']} judged in this run ({s['valid_now']} valid); "
-        f"{s['items'] - s['remaining']} of {s['items']} in all; ${s['spent_usd']:.4f} spent on this model.")
+        f"{s['items'] - s['remaining']} of {s['items']} in all; {s['spent_text']} spent on this model.")
     if s["stop_reason"]:
         say(f"Stopped: {s['stop_reason']}. Re-run the same command to continue; judged responses are kept.")
     elif s["remaining"] == 0:

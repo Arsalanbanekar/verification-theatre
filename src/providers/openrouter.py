@@ -18,7 +18,10 @@ import time
 from .common import Completion, HttpResult, RateLimit, get_json, parse_seconds, post_json
 
 NAME = "openrouter"
+LABEL = "OpenRouter"
 KEY_ENV = "OPENROUTER_API_KEY"
+COST_UNIT = "USD"
+CREDITS_HINT = "Add credit at openrouter.ai/settings/credits, then re-run"
 URL = "https://openrouter.ai/api/v1/chat/completions"
 MODELS_URL = "https://openrouter.ai/api/v1/models"
 RATE_HEADERS = ("retry-after", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset")
@@ -95,7 +98,7 @@ def token_split(usage: dict) -> tuple[int, int]:
     return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
 
 
-def cost_usd(usage: dict) -> float:
+def cost_usd(usage: dict, cfg: dict | None = None) -> float:
     """OpenRouter's own charge for the call, in USD credits (0 for :free models)."""
     try:
         return float(usage.get("cost") or 0.0)

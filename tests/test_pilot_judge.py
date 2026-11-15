@@ -25,18 +25,36 @@ def judge_ok(content=REPLY_OK, cost=0.0004):
     return HttpResult(200, {}, b, json.dumps(b), 0.2)
 
 
-def judges_config(tmp_path, main=None, cross=None):
-    """models.yaml with both judges chosen (test values), plus any overrides."""
+# The two OpenRouter judges as pre-registered (rev 3.4), with the settings models.yaml had before the
+# 15 Nov 2026 deviation (DEVIATIONS.md). The OpenRouter machinery is still tested against them.
+OPENROUTER_JUDGES = {
+    "main": {"provider": "openrouter", "model_id": MAIN_ID, "family": "test-lab",
+             "route": {"order": ["test-provider"], "allow_fallbacks": False, "require_parameters": True},
+             "temperature": 0.0, "reasoning": None, "json_mode": "json_schema", "max_output_tokens": 4000,
+             "concurrency": 8, "limits": {"rpm": 120}, "budget_usd": 3.00, "request_timeout_s": 180,
+             "sample_size": 600, "seed": 20261113},
+    "crosscheck": {"provider": "openrouter", "model_id": CROSS_ID, "family": "other-lab",
+                   "route": {"order": ["free-provider"], "allow_fallbacks": False, "require_parameters": True},
+                   "temperature": 0.0, "reasoning": None, "json_mode": "json_schema", "max_output_tokens": 4000,
+                   "concurrency": 2, "limits": {"rpm": 15, "rpd": 48}, "budget_usd": 0.0, "request_timeout_s": 180,
+                   "sample_size": 100, "seed": 20261114},
+}
+
+
+def judges_config(tmp_path, main=None, cross=None, name="judged.yaml"):
+    """models.yaml with both OpenRouter judges chosen (test values), plus any overrides."""
     cfg = yaml.safe_load((R.REPO / "models.yaml").read_text(encoding="utf-8"))
-    cfg["judges"]["main"].update({"model_id": MAIN_ID, "family": "test-lab",
-                                  "route": {"order": ["test-provider"], "allow_fallbacks": False,
-                                            "require_parameters": True}, **(main or {})})
-    cfg["judges"]["crosscheck"].update({"model_id": CROSS_ID, "family": "other-lab",
-                                        "route": {"order": ["free-provider"], "allow_fallbacks": False,
-                                                  "require_parameters": True}, **(cross or {})})
-    path = tmp_path / "judged.yaml"
+    cfg["judges"] = {"main": {**OPENROUTER_JUDGES["main"], **(main or {})},
+                     "crosscheck": {**OPENROUTER_JUDGES["crosscheck"], **(cross or {})}}
+    path = tmp_path / name
     path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     return path
+
+
+def unchosen_config(tmp_path):
+    """models.yaml as it stood before the judges were chosen: both model IDs empty."""
+    return judges_config(tmp_path, main={"model_id": None, "family": None},
+                         cross={"model_id": None, "family": None}, name="unchosen.yaml")
 
 
 class FakeJudge:
@@ -138,7 +156,7 @@ def test_pilot_refuses_before_any_call_while_the_judge_is_not_chosen(env, monkey
     groq_fake, gemini_fake = FakeSend(), FakeSend()      # no default: any call fails the test
     monkeypatch.setattr(groq, "send", groq_fake)
     monkeypatch.setattr(gemini, "send", gemini_fake)
-    assert pilot() == 2
+    assert pilot("--config", str(unchosen_config(env["tmp"]))) == 2
     assert groq_fake.calls == [] and gemini_fake.calls == []
     out = capsys.readouterr().out
     assert "has not been chosen yet" in out and "python src/runner.py --pilot --skip-judge" in out

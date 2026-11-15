@@ -1,5 +1,6 @@
 # Study models, judges, limits, prices and request settings (PREREGISTRATION.md §5-§6; judges rev 3.4).
-# Read by src/runner.py and src/grade.py. Provider docs read 2026-11-08/09 (OpenRouter 2026-11-10).
+# Read by src/runner.py and src/grade.py. Provider docs read 2026-11-08/09 (OpenRouter 2026-11-10,
+# Adaption 2026-11-15).
 #
 # Reasoning: each model runs at the lowest reasoning setting its provider documents, logged
 # with every call. gpt-oss cannot switch reasoning off ("low" is its floor); Qwen's "none"
@@ -63,24 +64,26 @@ models:
     generation_config: {thinkingConfig: {thinkingLevel: MINIMAL, includeThoughts: false}}
 
 # Scope-accuracy judges (§5, rev 3.4). Not study models; never shown the model, condition label or
-# truth value. Both run on OpenRouter (OPENROUTER_API_KEY in .env), with the same prompt.
-# Each model ID, family and serving provider is chosen before any main-data judging and committed
-# here before judging starts; the judges refuse to run while model_id is empty or breaks the §5
-# criteria: not OpenAI/gpt-oss, Qwen/Alibaba or Google; no router or unnamed model; the main judge
-# paid (no :free), the cross-check :free and from a third family.
+# truth value. Planned on OpenRouter; from 15 Nov 2026 the main judge runs on Adaption (sponsor
+# credits; DEVIATIONS.md). Each model ID, family and serving provider is chosen before any main-data
+# judging and committed here before judging starts; the judges refuse to run while model_id is empty
+# or breaks the §5 criteria: not OpenAI/gpt-oss, Qwen/Alibaba or Google; no router, unnamed model or
+# Adaption stack; on OpenRouter the main judge paid (no :free), the cross-check :free and from a
+# third family.
 judges:
   main:
-    provider: openrouter
-    model_id:                    # chosen from the candidates (RUNBOOK.md section 9), e.g. <author>/<model>
-    family:                      # e.g. the developer, recorded when chosen; the cross-check must differ
-    route: {order: [], allow_fallbacks: false, require_parameters: true}   # order: [<provider slug>]
-    temperature: 0.0
-    reasoning:                   # fixed when chosen, e.g. {effort: low}; logged with every call
-    json_mode: json_schema       # or json_object, whichever the pinned provider supports
-    max_output_tokens: 4000      # includes reasoning tokens on OpenRouter
+    provider: adaption           # Adaption Responses API via the `adaption` SDK (ADAPTION_API_KEY in .env)
+    model_id: glm-5.2            # listed by client.models.list() on 15 Nov 2026
+    family: zhipu                # Z.ai (Zhipu AI), GLM's developer
+    route: {order: [adaption], allow_fallbacks: false}   # Adaption serves the model itself; nothing is routed or sent
+    temperature: 0.0             # the API accepts 0-2
+    reasoning: provider default  # Adaption has no reasoning parameter; logged with every call
+    json_mode: none              # no JSON mode on Adaption: the prompt asks for JSON and the parser validates every reply
+    max_output_tokens: 4000      # includes reasoning tokens
     concurrency: 8
-    limits: {rpm: 120}           # paid models have no OpenRouter request cap; this only spaces the calls
-    budget_usd: 3.00             # hard stop on OpenRouter's measured cost for this judge
+    limits: {rpm: 120}           # Adaption documents no rate limits; this only spaces the calls
+    price_credits_per_mtok: {input: 1.40, cached_input: 0.26, output: 4.40}   # Adaption models page, 15 Nov 2026
+    budget_credits: 10.0         # hard stop on the credits computed from those prices
     request_timeout_s: 180
     sample_size: 600
     seed: 20261113               # draws the stratified sample
