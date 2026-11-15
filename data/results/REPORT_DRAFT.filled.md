@@ -187,11 +187,9 @@ prompt never mentions that the study concerns credentials.
 - **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
 - **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
-  certifies, judged by [the judges are not chosen yet: judges.main.model_id in models.yaml] on a stratified sample of 0 responses. A free model from
-  another family scored 100 of them with the same prompt; agreement between the two judges:
-  not computed yet: the cross-check judge has not scored any response. Judge results are reported only if the overall weighted kappa is at least 0.6; no
-  human labels are used. Reported as the 0/1/2 distribution among justifications that mention
-  the credential, plus the share that mention it, all with 95% CIs.
+  certifies, judged by `glm-5.2` via Adaption (temperature 0, the provider's default reasoning, blind to model, condition and truth) on a stratified sample of 570 responses; no human labels
+  are used. The pre-registered cross-check by a second judge was dropped (`DEVIATIONS.md`), so the agreement gate (judge results reported only if the two judges' linear-weighted kappa is at least 0.6) could not be evaluated: confirmatory H3 was not tested, and every scope-accuracy number is exploratory and unvalidated. Reported as the 0/1/2 distribution among justifications that mention the
+  credential, plus the share that mention it, all with 95% CIs.
 
 ### 3.5 Analysis
 
@@ -205,6 +203,9 @@ is reported alongside. Claim type enters as a factor throughout. One rule was ad
 collection (`DEVIATIONS.md`): a test with fewer than three pairs, or with the same difference in
 every pair, is reported as not testable, without a p-value, and enters the Holm family with
 p = 1; where a pre-registered test is not testable, the full-sample result is the informative one.
+The pre-registered cross-check judge was dropped (`DEVIATIONS.md`), so H3 was not tested and
+entered the Holm family with p = 1; its statistic on the one judge's scores is reported as
+exploratory and unvalidated.
 
 ---
 
@@ -224,9 +225,21 @@ With the C0-ceiling rule these tests were not testable, so the full-sample resul
 **4.4 Inflation without discrimination (H2b).** Figure 2: discrimination index by condition.
 On real-obscure pairs the discrimination index was +1.7 points at C0. Averaged over C1–C4 it did not reliably move (Δ = −4.0 points vs C0; 95% CI −8.0 to +0.1; p = 0.053, unadjusted; 10 pairs), and at C5 it rose by 27.1 points (95% CI 11.7 to 42.4; p_holm = 0.022; 10 pairs).
 
-**4.5 Justifications (H3).** Scope accuracy by condition Scope scores were not available.
+**4.5 Justifications (H3; exploratory, unvalidated).** Scope accuracy by condition 
 
-_Not available yet._. Credential-citation rate
+Scope accuracy is exploratory and unvalidated: one judge scored it, and the pre-registered cross-check was dropped (`DEVIATIONS.md`), so the agreement gate could not be evaluated and confirmatory H3 was not tested. Of the 281 judged C1–C4 justifications on real-obscure pairs, 86% (95% CI 82%–90%) mentioned the credential. Of those, 5% (95% CI 2%–7%) described its scope correctly (score 2), 17% (95% CI 10%–24%) did so partially (1), and 79% (95% CI 71%–87%) treated it as support for the claim or misattributed it (0); CIs over 10 pairs. Read against the pre-registered rule, the upper bound of the 95% CI for score 2 (7%) is below 50% (one-sample t-test against 50%: p < 0.001, unadjusted, outside the Holm family); this is an exploratory, unvalidated result, not a test of H3.
+
+**Exploratory, unvalidated** (one judge, no cross-check). Real-obscure pairs, pooled models. Shares of 0, 1 and 2 are among justifications that mention the credential; 95% CIs over pairs.
+
+| Conditions | judged | mention the credential | 0: support or misattribution | 1: partial | 2: correct scope |
+|---|---|---|---|---|---|
+| C1–C4 | 281 | 86% (82%–90%) | 79% (71%–87%) | 17% (10%–24%) | 5% (2%–7%) |
+| C1 | 68 | 80% (71%–90%) | 73% (55%–90%) | 21% (3%–39%) | 7% (0%–13%) |
+| C2 | 71 | 100% (100%–100%) | 90% (83%–97%) | 6% (0%–14%) | 4% (0%–9%) |
+| C3 | 72 | 100% (100%–100%) | 86% (74%–99%) | 12% (0%–25%) | 1% (0%–4%) |
+| C4 | 70 | 65% (55%–75%) | 39% (22%–56%) | 55% (34%–76%) | 6% (0%–13%) |
+
+. Credential-citation rate
 
 
 | Condition | n | credential-citation rate | abstention rate | mean confidence |
@@ -261,7 +274,7 @@ Structure (one paragraph each):
 
 ---
 
-## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft, baseline-ceiling bullet added during the sprint; required)
+## Appendix A. Limitations and Dual-Use / Ethical Considerations (pre-sprint draft; the baseline-ceiling and single-judge bullets added during the sprint; required)
 
 **What this study establishes.** Within single-turn evaluations of four open-weight and small
 proprietary models, how acceptance and confidence in a fixed claim change when a credential is
@@ -276,9 +289,10 @@ attached, and whether models distinguish credentials that license different infe
 - Whether a credential raises belief in a claim a model doubts without one. Without a credential, the models accepted almost all claims, true and false alike: pooled over models, 99% of true and 97% of false real-obscure claims, 98% and 96% invented; gpt-oss-120b, gpt-oss-20b and gemini-3.5-flash-lite accepted every C0 response; qwen3.8-27b 90%. In the pooled analysis 8 of 10 real-obscure pairs were at the C0 ceiling, with both versions accepted in every C0 response; on such pairs a credential can only leave acceptance unchanged or lower it. The pre-registered inflation tests drop those pairs, which left the H1 and H2 tests on real-obscure pairs not testable; the full-sample results reported beside them are the informative ones.
 - Invented organisations are detectable by non-recognition (§3.1); the invented half therefore
   measures how credentials interact with unknown sources, not uncheckable facts.
-- Scope accuracy relies on LLM judges, with no human labels. Agreement between two judges from
-  different families shows that the rubric was applied consistently, not that it was applied
-  correctly.
+- Scope accuracy rests on a single LLM judge (glm-5.2), with no human labels. The pre-registered
+  cross-check by a second judge was dropped (`DEVIATIONS.md`), so neither the consistency nor the
+  correctness of its scoring was checked: the scope-accuracy scores are exploratory and
+  unvalidated, and confirmatory H3 was not tested.
 - Listing credential-related reasons in every condition may increase attention to credentials;
   this is constant across conditions and cannot explain differences between them.
 

@@ -1,0 +1,16 @@
+model_scope,claim_type,hypothesis,comparison,measure,unit,scores,n_pairs,delta,ci_low,ci_high,p,p_perm,p_perm_min,sd,diff_min,diff_max,not_testable
+pooled,all,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",20,0.04009424603174603,0.02208231403511997,0.05810617802837209,3.541476150827563e-22,4.999750012499375e-05,4.999750012499375e-05,0.038485849472900825,0.0,0.12142857142857143,
+pooled,real_obscure,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.04636904761904762,0.017749723807758057,0.07498837143033718,5.051051746008686e-11,0.001953125,0.001953125,0.0400070560197586,0.0,0.12142857142857143,
+pooled,invented,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.033819444444444444,0.006684548827941148,0.06095434006094774,2.4568374451120858e-11,0.001953125,0.001953125,0.03793196849016796,0.0,0.09375,
+gpt-oss-120b,all,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",20,0.0,,,,,,0.0,0.0,0.0,zero variance
+gpt-oss-120b,real_obscure,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.0,,,,,,0.0,0.0,0.0,zero variance
+gpt-oss-120b,invented,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.0,,,,,,0.0,0.0,0.0,zero variance
+gpt-oss-20b,all,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",20,0.0,,,,,,0.0,0.0,0.0,zero variance
+gpt-oss-20b,real_obscure,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.0,,,,,,0.0,0.0,0.0,zero variance
+gpt-oss-20b,invented,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.0,,,,,,0.0,0.0,0.0,zero variance
+qwen3.8-27b,all,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",20,0.1320436507936508,0.06857090024073242,0.19551640134656917,2.1490576874581062e-10,4.999750012499375e-05,4.999750012499375e-05,0.1356213605441203,0.0,0.375,
+qwen3.8-27b,real_obscure,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.16547619047619047,0.07424331312987723,0.2567090678225037,1.656074381230563e-05,0.001953125,0.001953125,0.1275347684279636,0.0,0.3333333333333333,
+qwen3.8-27b,invented,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.09861111111111112,-0.002760335118674642,0.19998255734089687,8.877394598621331e-06,0.001953125,0.001953125,0.14170751045205232,0.0,0.375,
+gemini-3.5-flash-lite,all,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",20,0.028333333333333332,-0.004184358077407694,0.06085102474407436,1.4498569658151385e-17,4.999750012499375e-05,4.999750012499375e-05,0.06948010780156404,0.0,0.2,
+gemini-3.5-flash-lite,real_obscure,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.02,-0.02524314325596409,0.06524314325596409,1.8089268587034353e-09,0.001953125,0.001953125,0.06324555320336758,0.0,0.2,
+gemini-3.5-flash-lite,invented,H3,C1-C4 vs 50%,share of credential mentions scored 2,share,"exploratory, unvalidated",10,0.03666666666666667,-0.018915400443997234,0.09224873377733056,1.5244813279582387e-08,0.001953125,0.001953125,0.07769837216465372,0.0,0.2,
