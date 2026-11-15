@@ -147,18 +147,17 @@ screened against the GeoNames gazetteer (rejected within edit distance 2 of a re
 web search. No real entity is assigned an adverse finding it did not receive, and no private
 individual is named.
 
-**Probes.** Before data collection, a closed-book model outside the study was shown each real
-pair in forced-choice format; confidence was near chance (50–60) for all pairs in the final
-corpus. A second probe showed the 20 true claims side by side and asked which were fabricated;
-it identified all ten invented claims, in every case citing non-recognition of the named
-organisation. We therefore interpret the invented half as claims about **unrecognised
-organisations** rather than uncheckable facts, and treat the real-obscure half as the primary
-test of H1–H3.
+Closed-book probes run before data collection (Appendix B.1) found the real claims obscure and
+the invented organisations unrecognised. We therefore interpret the invented half as claims about
+**unrecognised organisations** rather than uncheckable facts, and treat the real-obscure half as
+the primary test of H1–H3.
 
 ### 3.2 Conditions
 
 Each claim appears inside an identical document body. Conditions differ only in the credential
-reported alongside it. All credentials are honest.
+reported alongside it. All credentials are honest (Table 1).
+
+**Table 1.** The six conditions: the credential shown with the claim, and what it licenses.
 
 | | Credential | What it licenses |
 |---|---|---|
@@ -201,9 +200,6 @@ models.
 - **Acceptance**: proportion labelled true.
 - **Discrimination index**: acceptance of the true twin minus acceptance of the false twin, per
   pair and condition. Inflation without accuracy appears as rising acceptance with a flat index.
-- **Confidence delta**: confidence minus the same item's C0 mean.
-- **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
-- **Abstention rate**: proportion labelled uncertain or citing inability to determine.
 - **Scope accuracy** (0–2): whether the justification correctly describes what the credential
   certifies and that it does not bear on the claim's truth (2), does so partially (1), or treats
   the credential as support for the claim or misattributes it (0); justifications that do not
@@ -220,6 +216,8 @@ models.
     not tested, and every scope-accuracy number is exploratory and unvalidated.
   - We report the 0/1/2 distribution among justifications that mention the credential, plus the
     share that mention it, all with 95% CIs; no human labels are used.
+- Secondary measures (confidence delta, credential-citation and abstention rates) are defined in
+  Appendix B.2.
 
 ### 3.5 Analysis
 
@@ -262,11 +260,12 @@ pre-registration specified alongside; their p-values are unadjusted and labelled
 H1 is not supported, and the effect runs the other way. A valid credential that certified nothing
 about the claim (C1) lowered acceptance of real-obscure claims by 15.0 points (95% CI 9.5 to 20.5;
 p < .001, unadjusted; Figure 1); on the false twins alone the drop was 12.9 points (95% CI 7.6 to
-18.3; p < .001, unadjusted). The drop was concentrated in two models (Table 1). gpt-oss-20b
+18.3; p < .001, unadjusted). The drop was concentrated in two models (Table 2). gpt-oss-20b
 (−28.3, p = .008) and Qwen (−26.7, p = .008) became markedly more cautious; Gemini barely moved
 (−5.0, p = .34); and gpt-oss-120b did not move at all (0.0 in every pair). These per-model p-values
 are unadjusted. Within the gpt-oss family, the larger model was unaffected by a credential that
-the smaller model treated as a reason for doubt.
+the smaller model treated as a reason for doubt. For claims about invented organisations
+(H5, exploratory; Appendix B.4), credentials lowered acceptance too, by less than for real claims.
 
 *Figure 1. Acceptance by condition, split by claim type and truth, pooled over models (95% CIs
 over claims; `data/results/fig1_acceptance.png`).*
@@ -281,8 +280,8 @@ A valid signature from a signer absent from any trust list (C4) lowered acceptan
 (−12.7, CI −22.3 to −3.1, p = .015) and relative to C3 (−21.7, CI −31.1 to −12.2, p < .001; both
 unadjusted).
 
-The C4 effect came mainly from Qwen (−42.5 relative to C1, p = .010, unadjusted; Table 1). Two of
-Qwen's own C4 tests also change conclusion within the bounds of its parse failures (§4.8). Models
+The C4 effect came mainly from Qwen (−42.5 relative to C1, p = .010, unadjusted; Table 2). Two of
+Qwen's own C4 tests also change conclusion within the bounds of its parse failures (Appendix B.5). Models
 read whether the signer was trusted, but not what the signer vouched for.
 
 ### 4.4 Belief changed, discrimination did not (H2b)
@@ -295,7 +294,7 @@ C5, though alongside falling rather than rising acceptance.
 
 The positive control behaved as designed, but reliably in one model only. Gemini's discrimination
 rose by 90.0 points at C5 (p_holm < .001). The three Groq models' gains (+1.7 to +10.0) were not
-reliable (Table 1).
+reliable (Table 2).
 
 *Figure 2. Discrimination index (true-twin minus false-twin acceptance) by condition and claim
 type, pooled over models (95% CIs over pairs; `data/results/fig2_discrimination.png`).*
@@ -313,41 +312,16 @@ those:
 
 Neither gpt-oss model produced a fully correct description in any pair. Among their
 credential-mentioning justifications, Qwen did so in 15% and Gemini in 2% (pair-level means;
-Table 1). Misreadings were most frequent for gathered assertions: under C2, 88% scored 0
-(Figure 3). Under C4, 55% of mentions described the credential partially (score 1), against 8–19%
-under C1–C3, and fewer justifications mentioned the credential at all (67%).
+Table 2). Misreadings were most frequent for gathered assertions: under C2, 88% scored 0
+(Figure 3, Appendix B.6). Under C4, 55% of mentions described the credential partially (score 1), against 8–19%
+under C1–C3, and fewer justifications mentioned the credential at all (67%). Two verbatim examples are in
+Appendix B.3.
 
-Two verbatim examples:
-- **Score 0** (Gemini 3.5 Flash-Lite, C2, accepting the false twin of an invented claim): "The
-  document contains a valid cryptographic C2PA manifest signed by Vellumworth Document Services
-  Ltd with all validation checks succeeding, confirming that the statement originates securely
-  from the publisher." The statement was only gathered, never attributed to the signer.
-- **Score 2** (Gemini 3.5 Flash-Lite, C4, answering "uncertain" to the false twin of an invented
-  claim; excerpt): "The document contains a valid cryptographic signature, but the signing certificate is
-  marked as untrusted and there is insufficient external evidence to verify the factual
-  accuracy …"
-
-*Figure 3. Scope-accuracy scores of the judged C1–C4 justifications by condition, pooled over
-models and claim types, including justifications that do not mention the credential (exploratory
-and unvalidated: one judge; `data/results/fig3_scope_accuracy.png`).*
-
-### 4.6 Unrecognised sources (H5, exploratory)
-
-In the single-document setting, models did not reject claims about invented organisations at
-baseline. They accepted them at rates similar to real ones: 98% of true and 96% of false invented
-claims, against 99% and 97% of real-obscure ones. This is unlike the side-by-side realness probe
-(§3.1).
-
-In the full sample, credentials lowered acceptance of invented claims as well (−5.4 points, 95% CI
-−10.4 to −0.4, p = .038, unadjusted), but less than for real claims (difference 9.6 points, 95% CI
-2.7 to 16.5, p = .009, unadjusted). With the C0-ceiling rule the comparison was not testable.
-Credentials did not lend legitimacy to unrecognised sources.
-
-### 4.7 The scope interpreter (H4)
+### 4.6 The scope interpreter (H4)
 
 Prepending a plain-language summary of what each credential certifies lowered acceptance on C1 and
 C2 by 42.8 points (95% CI 34.1 to 51.6, p_holm < .001; three Groq models, all 20 pairs;
-Figure 4). It did so indiscriminately:
+Figure 4, Appendix B.6). It did so indiscriminately:
 - acceptance of true claims fell from 85% to 44%, and of false claims from 87% to 42%;
 - the change in discrimination was +2.9 points (CI −2.6 to 8.4, p = .28, unadjusted, exploratory);
 - no single model showed a reliable gain.
@@ -355,12 +329,9 @@ Figure 4). It did so indiscriminately:
 Qwen's interpreter arm had twice the parse-failure rate of the same conditions without it (15.8%
 vs 7.9%), so its own H4 estimate carries that caveat.
 
-*Figure 4. Acceptance on C1 and C2 with and without the scope interpreter, per interpreter-arm
-model, with each model's C0 acceptance marked (`data/results/fig4_interpreter.png`).*
+### 4.7 Models
 
-### 4.8 Models and robustness
-
-**Table 1.** Per model, real-obscure pairs.
+**Table 2.** Per model, real-obscure pairs.
 
 | Model | C0 acceptance | C1 − C0 | C3 − C2 | C4 − C1 | Discrimination, C5 − C0 | Scored 2 (exploratory) |
 |---|---|---|---|---|---|---|
@@ -370,7 +341,7 @@ model, with each model's C0 acceptance marked (`data/results/fig4_interpreter.pn
 | Gemini 3.5 Flash-Lite | 100% | −5.0 | 0.0 | −11.7 | +90.0* | 2% |
 | Pooled | 98% | −15.0* | +3.1 | −12.7* | +27.1* | 4% |
 
-Notes to Table 1:
+Notes to Table 2:
 - Differences are in percentage points.
 - C1 − C0, C3 − C2 and C4 − C1 are full-sample results, because the pre-registered tests were not
   testable at the C0 ceiling.
@@ -381,21 +352,9 @@ Notes to Table 1:
 - \* marks p < .05: unadjusted for the full-sample columns, Holm-adjusted for C5 − C0.
 
 gpt-oss-120b's acceptance was unmoved by credentials, yet in exploratory scoring it never described
-their scope fully correctly: stable behaviour is not the same as correct reading.
+their scope fully correctly: stable behaviour is not the same as correct reading. Qwen's parse failures, and exploratory
+robustness checks without Qwen and within the bounds of its failures, are in Appendix B.5.
 
-Qwen failed to return valid JSON in 106 of 960 trials (11.0%). No condition's rate exceeded twice
-Qwen's average (22.1%). Its rates did differ across conditions (χ²(7) = 16.9, p = .018), and were
-twice as high with the interpreter on C1 and C2 (15.8% vs 7.9%, Fisher p = .011).
-
-Exploratory robustness checks re-ran the pre-registered tests without Qwen, and with Qwen's failed
-cells set first to all-reject and then to all-accept.
-- **Without Qwen**, one pooled conclusion changed: discrimination at C5 on invented pairs became
-  reliable (+23.3 points, p_holm = .049, against +24.2, p_holm = .115, with Qwen). The pooled
-  real-obscure inflation tests cannot be run at all without Qwen, because every remaining pair is at
-  the C0 ceiling.
-- **Within Qwen's bounds**, two of its own tests changed. Its C4 − C1 and C4 − C3 differences on all
-  pairs became reliable decreases when every failed cell counted as a rejection (−28.6 and −32.1
-  points; p_holm = .019 and .013).
 
 ---
 
@@ -499,6 +458,73 @@ real places and companies.
 
 **AI assistance.** AI tools were used for literature search, code and drafting. All results were
 produced by the released code, and the author is responsible for all content.
+
+---
+
+## Appendix B. Supplementary methods and results
+
+### B.1 Corpus probes
+
+Before data collection, a closed-book model outside the study was shown each real
+pair in forced-choice format; confidence was near chance (50–60) for all pairs in the final
+corpus. A second probe showed the 20 true claims side by side and asked which were fabricated;
+it identified all ten invented claims, in every case citing non-recognition of the named
+organisation.
+
+### B.2 Secondary measures
+
+- **Confidence delta**: confidence minus the same item's C0 mean.
+- **Credential-citation rate**: proportion of responses citing the signature or signer as a reason.
+- **Abstention rate**: proportion labelled uncertain or citing inability to determine.
+
+### B.3 Example justifications
+
+Two verbatim examples:
+- **Score 0** (Gemini 3.5 Flash-Lite, C2, accepting the false twin of an invented claim): "The
+  document contains a valid cryptographic C2PA manifest signed by Vellumworth Document Services
+  Ltd with all validation checks succeeding, confirming that the statement originates securely
+  from the publisher." The statement was only gathered, never attributed to the signer.
+- **Score 2** (Gemini 3.5 Flash-Lite, C4, answering "uncertain" to the false twin of an invented
+  claim; excerpt): "The document contains a valid cryptographic signature, but the signing certificate is
+  marked as untrusted and there is insufficient external evidence to verify the factual
+  accuracy …"
+
+### B.4 Unrecognised sources (H5, exploratory)
+
+In the single-document setting, models did not reject claims about invented organisations at
+baseline. They accepted them at rates similar to real ones: 98% of true and 96% of false invented
+claims, against 99% and 97% of real-obscure ones. This is unlike the side-by-side realness probe
+(§3.1).
+
+In the full sample, credentials lowered acceptance of invented claims as well (−5.4 points, 95% CI
+−10.4 to −0.4, p = .038, unadjusted), but less than for real claims (difference 9.6 points, 95% CI
+2.7 to 16.5, p = .009, unadjusted). With the C0-ceiling rule the comparison was not testable.
+Credentials did not lend legitimacy to unrecognised sources.
+
+### B.5 Parse failures and robustness checks
+
+Qwen failed to return valid JSON in 106 of 960 trials (11.0%). No condition's rate exceeded twice
+Qwen's average (22.1%). Its rates did differ across conditions (χ²(7) = 16.9, p = .018), and were
+twice as high with the interpreter on C1 and C2 (15.8% vs 7.9%, Fisher p = .011).
+
+Exploratory robustness checks re-ran the pre-registered tests without Qwen, and with Qwen's failed
+cells set first to all-reject and then to all-accept.
+- **Without Qwen**, one pooled conclusion changed: discrimination at C5 on invented pairs became
+  reliable (+23.3 points, p_holm = .049, against +24.2, p_holm = .115, with Qwen). The pooled
+  real-obscure inflation tests cannot be run at all without Qwen, because every remaining pair is at
+  the C0 ceiling.
+- **Within Qwen's bounds**, two of its own tests changed. Its C4 − C1 and C4 − C3 differences on all
+  pairs became reliable decreases when every failed cell counted as a rejection (−28.6 and −32.1
+  points; p_holm = .019 and .013).
+
+### B.6 Figures 3 and 4
+
+*Figure 3. Scope-accuracy scores of the judged C1–C4 justifications by condition, pooled over
+models and claim types, including justifications that do not mention the credential (exploratory
+and unvalidated: one judge; `data/results/fig3_scope_accuracy.png`).*
+
+*Figure 4. Acceptance on C1 and C2 with and without the scope interpreter, per interpreter-arm
+model, with each model's C0 acceptance marked (`data/results/fig4_interpreter.png`).*
 
 ---
 
