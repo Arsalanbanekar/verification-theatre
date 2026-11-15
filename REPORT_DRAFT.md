@@ -436,6 +436,18 @@ statement to its evidence, is the design that helped, though in our data reliabl
 For agent developers, the practical lesson is to evaluate provenance consumption by discrimination,
 not acceptance: a pipeline that becomes more cautious is not thereby more correct.
 
+**Measured against an epistemic code.** Navaie's ECAISA, an Epistemic Code for AI Safety and
+Alignment, asks that safety-relevant claims leave an auditable record, inspectable and contestable
+by independent reviewers: transparent evidence, claims proportionate to that evidence, independent
+and adversarial attempts to break them, and warranted claims kept apart from tidy narrative
+[Navaie 2026]. This study meets most of these: its pre-registration was pushed to the public
+repository before data collection, every later change is in a timestamped deviations log, the
+corpus, code and data are released, and unadjusted, exploratory and per-model results are labelled
+as such. It does not meet independent verification: the scope-accuracy judge is a single
+unvalidated model, and no result has been replicated. Independent verification is therefore the
+priority for follow-up work: replication of these results, and validation of the scope judge by a
+second judge or human raters.
+
 **Future work.** Our documents asserted their own claims, which produced the baseline ceiling;
 future designs should vary document reliability so that inflation is measurable. Agentic retrieval
 with competing sources, cryptographically signed assets with real validation, frontier models,
@@ -536,3 +548,5 @@ produced by the released code, and the author is responsible for all content.
   Sustained Multi-Turn Pressure." arXiv:2609.09090, 2026. https://arxiv.org/abs/2609.09090
 - [SycEval] Fanous et al. "SycEval." AIES 2025. arXiv:2502.08177.
 - [ELEPHANT] Cheng et al. "ELEPHANT." 2025. arXiv:2505.13995.
+- [Navaie 2026] K. Navaie. "Epistemic norms for AI safety and alignment research." *Artificial
+  Intelligence Review* 59(12), article 265, 2026. https://doi.org/10.1007/s10462-026-11666-8
