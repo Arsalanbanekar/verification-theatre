@@ -37,7 +37,7 @@ with its date, time and reason.
      - Adaption lists seven models. Four are excluded as Qwen/Alibaba or Google (qwen3.5-397b, qwen3.8-27b, gemma-4-26b-a4b-it, gemma-4-31b-it). That leaves glm-5.2 and two "Flash" variants (glm-5.3-flash, deepseek-v4-flash).
      - glm-5.2 is a named production model, not a router or an Adaption stack.
      - JSON output: Adaption has no JSON mode. The unchanged judge prompt asks for JSON, and the parser validates every reply.
-     - Cost: 3.01 sponsor credits for the 600 judgements, above §5's ~$2 guide, which was a budget guide, not a selection criterion. (Reworded on 16 Nov 2026, 00:35 IST, after the judging. The original line, in `3d50f68`, projected about 2.9 credits from the pilot check.)
+     - Cost: 3.01 sponsor credits for the 600 judgements, above §5's ~$2 guide, which was intended as a budget guide. (Reworded on 16 Nov 2026 after the judging, at 00:35 and again at 01:26 IST. The original line, in `3d50f68`, projected about 2.9 credits from the pilot check.)
 
      The settings were committed in `models.yaml` (`e578ba5`) before any judge call: temperature 0; the provider's default reasoning, since Adaption has no reasoning parameter; at most 4,000 output tokens including reasoning; no seed, since Adaption accepts none. The prompt and the blinding are unchanged (`src/judge.py`).
   3. **The cross-check judge is dropped**, by the author's decision. No second judge scores any response.

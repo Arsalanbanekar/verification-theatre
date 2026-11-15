@@ -1,12 +1,16 @@
 # Status
 
-Last updated 16 Nov 2026, 01:00 IST. The sprint (13–15 Nov 2026) closes on 16 Nov at 11:59 UTC.
+Last updated 16 Nov 2026, 01:30 IST. The sprint (13–15 Nov 2026) closes on 16 Nov at 11:59 UTC.
 
-**Where things stand.** Data collection, judging and analysis are complete and committed. The
-write-up is next.
-- `data/results/results_summary.md` has every number, with ready-to-paste text for each slot in
-  `REPORT_DRAFT.md`.
-- `data/results/REPORT_DRAFT.filled.md` shows the draft with that text substituted.
+**Where things stand.** Data collection, judging and analysis are complete and committed.
+- The report draft is merged and filled (`REPORT_DRAFT.md`, 16 Nov). Its title, abstract,
+  Contributions, Results, Discussion and Appendix A are from the v2 sections, and §3 matches what
+  was done.
+- Every number in it was checked against `data/results/results_summary.md` and the results CSVs.
+  Every reference marked for checking was confirmed and given its authors.
+- The main text is an estimated 6.4–6.9 pages in a two-column template, within the 8-page limit.
+- What remains: paste it into the official template and work through the submission checklist
+  (RUNBOOK §14).
 
 **Before the sprint**, tagged `pre-sprint` (`fee706c`): the design, corpus, code, both probes, the
 pre-registration (revs 1–3.4) and a pilot of the study calls on 10–11 Nov (`data/pilot/`, excluded
@@ -88,8 +92,8 @@ Real-obscure pairs, pooled over models; details and every table in `results_summ
 
 ## Open issues for the write-up
 
-1. **Framing.** The title and the abstract template presume inflation. The data show credentials
-   lowering acceptance, so rewrite both before submission.
+1. **Framing (done 16 Nov).** The title and abstract now report what was found: credentials changed
+   how much the models believed, not how well.
 2. **Baseline ceiling.** Report the pre-registered inflation tests as not testable, and the
    full-sample results as the informative ones (`results_summary.md`, "Baseline (C0) and the
    C0-ceiling rule"). Appendix A has the limitation.

@@ -105,7 +105,7 @@ pipeline on fake data with built-in effects, so you see the real outputs before 
 exists.
 ```
 python src/synthetic.py --seed 2 --out data/synthetic/raw --graded-dir data/synthetic/graded
-python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/graded --pilot-dir data/synthetic/pilot --out data/synthetic/results
+python src/analyse.py --raw-dir data/synthetic/raw --graded-dir data/synthetic/graded --pilot-dir data/synthetic/pilot --out data/synthetic/results --draft tests/fixtures/report_draft_slots.md
 ```
 The last lines should be:
 ```
@@ -577,6 +577,18 @@ git commit -m "Analysis results"
 what happened in `DEVIATIONS.md`, and re-run. Re-running is always safe.
 
 ## 13. Filling REPORT_DRAFT.md
+
+**Done on 16 Nov 2026.**
+- `REPORT_DRAFT.md` now holds the merged report: the v2 title, abstract, Contributions, §4, §5 and
+  Appendix A text, with §3 updated to what was done.
+- Every slot is filled, and every number was checked against `results_summary.md` and the CSVs of
+  the analysis at `36898c0`. The checked references have their authors.
+- The draft has no slots left, so a re-run of `python src/analyse.py` reports `0 draft slots filled`,
+  and `REPORT_DRAFT.filled.md` is then the report as it stands.
+- The slot template is kept in `tests/fixtures/report_draft_slots.md`. Pass it as `--draft` to
+  regenerate the slot text.
+
+The steps below are how it was filled.
 
 1. **Start from the filled preview.** Copy `data/results/REPORT_DRAFT.filled.md` to `REPORT.md`
    in the repository root, and leave `REPORT_DRAFT.md` as it is. Delete the first line (the

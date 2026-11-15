@@ -16,7 +16,10 @@ from src import runner as R
 from src import synthetic as S
 
 MODELS = ["gpt-oss-120b", "gpt-oss-20b", "qwen3.8-27b", "gemini-3.5-flash-lite"]
-DRAFT = R.REPO / "REPORT_DRAFT.md"
+# The slot template: REPORT_DRAFT.md as it stood before its slots were filled (16 Nov 2026). The slot machinery
+# is tested on it; the filled report itself is checked by test_report_states_the_current_facts.
+DRAFT = R.REPO / "tests" / "fixtures" / "report_draft_slots.md"
+REPORT = R.REPO / "REPORT_DRAFT.md"
 # Any single synthetic data set can show a chance false positive (about 5% per Holm family; null
 # seeds 0 and 1 do, for H4). This seed has none; test_null_false_positive_rate checks calibration
 # over many seeds, so a structural bias cannot hide behind the choice.
@@ -151,16 +154,19 @@ def test_outputs_are_written(scenario):
     assert DRAFT.read_text(encoding="utf-8") != filled                     # the draft itself is never written
 
 
-def test_draft_states_the_current_facts():
-    text = " ".join(DRAFT.read_text(encoding="utf-8").split())           # independent of line wrapping
+def test_report_states_the_current_facts():
+    raw = REPORT.read_text(encoding="utf-8")
+    text = " ".join(raw.split())                                       # independent of line wrapping
+    assert re.findall(r"\{[^{}]*\}", raw) == [] and "[verify" not in raw   # every slot filled, every reference checked
     for stale in ("Gemini 3.1", "Gemini 3.6", "spot check", "Spot check", "rev 3.1", "data/results_summary.md",
                   "Gemma", "hand-label", "9 of 10 pilot calls", "judge–human", "human labels,",
                   "A free model from another family", "agreement between the two judges"):   # dropped (DEVIATIONS.md)
         assert stale not in text, stale
     for fact in ("rev 3.3", "rev 3.4", "Gemini 3.5 Flash-Lite", "exploratory and unvalidated", "no human labels",
-                 "single LLM judge (glm-5.2)", "H3 was not tested", "(H3; exploratory, unvalidated)",
+                 "single LLM judge (glm-5.2)", "H3 was not tested", "(exploratory; H3 not tested)",
+                 "`glm-5.2` via Adaption", "re-asked once with a 12,000-token cap", "tagged `pre-sprint`",
                  "paired t-tests over pairs", "Holm correction over the eight", "upper bound of the 95% CI",
-                 "data/results/results_summary.md"):
+                 "data/results/results_summary.md", "Table 1", "Figure 1", "Figure 2", "Figure 3", "Figure 4"):
         assert fact in text, fact
 
 

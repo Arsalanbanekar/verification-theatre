@@ -75,7 +75,7 @@ Any later change to the code or protocol is listed in `DEVIATIONS.md`.
 | `PREREGISTRATION.md` | Hypotheses, conditions, measures, analysis plan (rev 3.4) |
 | `DEVIATIONS.md` | Changes made after data collection began |
 | `RUNBOOK.md` | How the study is run, step by step, from pilot to submission |
-| `REPORT_DRAFT.md` | Report draft with slots that `src/analyse.py` fills |
+| `REPORT_DRAFT.md` | The report draft, its slots filled from the results on 16 Nov 2026 (the slot template: `tests/fixtures/report_draft_slots.md`) |
 | `CLAUDE.md` | Build instructions for the codebase |
 | `STATUS.md` | Progress, decisions, open issues |
 | `corpus/claims.jsonl` | Claim corpus: true/false twin pairs, invented and real-obscure |
