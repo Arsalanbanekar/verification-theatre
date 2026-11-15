@@ -1,4 +1,4 @@
-# Verification Theatre? File-Level Provenance Credentials Change How Much Language Models Believe, Not How Well
+# Verification Theatre? File-Level Provenance Credentials Change How Much Some Language Models Believe, Not How Well
 
 *Draft for the Apart Research AI x Epistemics Research Sprint, 13–15 Nov 2026. Track 2: Trust
 Infrastructure. Paste section by section into the official template.*
@@ -24,10 +24,10 @@ differ only in what they certify (3,600 trials, including a countermeasure arm).
 credential, models accepted nearly every claim, true or false. Contrary to our hypothesis, a
 credential that certified nothing about the claim lowered acceptance of real-world claims (−15.0
 percentage points, 95% CI −20.5 to −9.5). We found no reliable difference
-between a signer who asserted a statement and one who merely recorded it (+3.1, CI −3.6 to 9.9),
-but acceptance fell when the signer was not trusted (−12.7). Credentials changed how much models
-believed, not how well: discrimination between true and false claims stayed flat until a
-credential bound the claim to a checkable source (+27.1). In exploratory scoring by a single
+between a signer who asserted a statement and one who merely recorded it (+3.1, CI −3.6 to 9.9);
+an untrusted signer lowered acceptance (−12.7), mainly in one model. Credentials changed how much
+models believed, not how well: true–false discrimination stayed flat until a credential bound the
+claim to a checkable source (+27.1, reliable in one model). In exploratory scoring by a single
 unvalidated judge, about 4% of justifications mentioning a credential described its scope
 correctly. In three models, a plain-language summary of each credential's scope lowered
 acceptance by a further 42.8 points without a reliable gain in discrimination. We release the
@@ -77,8 +77,9 @@ failed to change, is the subject of this paper.
    defined by the C2PA 2.4 specification.
 2. Evidence that file-level credentials change how much models believe, not how well. We found no
    credence inflation. Instead, credentials lowered acceptance in two of four models; models
-   ignored the attribution distinction the standard defines while responding to trust status; and
-   discrimination improved only when a credential bound the claim to a checkable source.
+   ignored the attribution distinction the standard defines while, pooled, responding to trust
+   status, mainly in one model; and discrimination improved only when a credential bound the claim
+   to a checkable source, reliably in one model.
 3. Exploratory evidence that, when models explain their verdicts, they rarely describe a
    credential's scope correctly.
 4. A test of a cheap countermeasure, a plain-language scope summary, which lowered acceptance
@@ -402,37 +403,38 @@ cells set first to all-reject and then to all-accept.
 
 **Credentials did not make models more credulous.** The attack we set out to measure, an honest
 signature on a false document raising an agent's belief, did not appear in these four models. The
-more striking vulnerability sat in the baseline: with no credential at all, models accepted
-whatever a document stated, false claims included. A credential cannot inflate belief that is
-already at ceiling, and in our setting the threat to accuracy came from credulity towards
-documents, not from credentials.
+more striking vulnerability sat in the baseline: with no credential at all, three of the four
+models accepted every claim a document stated, false ones included, and the fourth accepted 90%. A
+credential cannot inflate belief that is already at ceiling, and in our setting the threat to
+accuracy came from credulity towards documents, not from credentials.
 
 **But credentials moved belief without informing it.** Where models responded to credentials, they
-responded to the wrong parts. Acceptance shifted with trust status, a property of the signer, and
-not with whether the signer asserted the claim, which is the distinction the C2PA specification
-uses to define responsibility. Discrimination between true and false claims did not change across
-the four credentials that bore no relation to the claim's truth, and when models explained
-themselves, they rarely described what a credential covered (exploratory). File-level credentials
-changed how much models believed, not how well: a form of verification theatre in which a seal
+responded to the wrong parts. Pooled over models, acceptance shifted with trust status, a property
+of the signer, though mainly in one model. In none did it shift reliably with whether the signer
+asserted the claim, which is the distinction the C2PA specification uses to define responsibility.
+Discrimination between true and false claims did not reliably change in any model across the four
+credentials that bore no relation to the claim's truth, and when models explained themselves, they
+rarely described what a credential covered (exploratory). File-level credentials changed how much
+some models believed, and in none of them how well: a form of verification theatre in which a seal
 shifts confidence while the statement inside it goes unread.
 
-**Telling models what a credential covers made them doubt everything.** The interpreter adds no
-information the manifest lacks; it states the scope in plain sentences. It lowered acceptance of
-true and false claims almost equally, trading credulity for indiscriminate scepticism. The missing
-layer between provenance standards and their machine consumers is therefore not presentation
-alone. The one condition that improved accuracy was C5, where the credential connected the claim to
-a checkable source, though reliably so only in Gemini. A model can use provenance when it bears on
-the claim; the models we tested did not, on their own, infer what a file-level credential does and
-does not establish.
+**Telling models what a credential covers made them doubt true and false claims alike.** The
+interpreter adds no information the manifest lacks; it states the scope in plain sentences. In each
+of the three models tested, it lowered acceptance of true and false claims almost equally, trading
+credulity for indiscriminate scepticism. The missing layer between provenance standards and their
+machine consumers is therefore not presentation alone. The one condition that improved accuracy was
+C5, where the credential connected the claim to a checkable source, though reliably so only in
+Gemini. A model can use provenance when it bears on the claim; the models we tested did not, on
+their own, infer what a file-level credential does and does not establish.
 
 **Implications for provenance mandates.** Machine-readable provenance is being required on the
 assumption that AI systems will consume it well. Our results suggest that file-level credentials,
 which certify signers and integrity, will not by themselves make agents more accurate, and may
-shift belief in ways unrelated to truth, including doubt about genuine content from untrusted
-signers. Claim-level binding, where a credential ties a statement to its evidence, is the design
-that helped, though in our data reliably only for Gemini. For agent developers, the practical
-lesson is to evaluate provenance consumption by discrimination, not acceptance: a pipeline that
-becomes more cautious is not thereby more correct.
+shift belief in ways unrelated to truth: in our data an untrusted signer lowered acceptance of true
+claims as well as false ones, mainly in one model. Claim-level binding, where a credential ties a
+statement to its evidence, is the design that helped, though in our data reliably only for Gemini.
+For agent developers, the practical lesson is to evaluate provenance consumption by discrimination,
+not acceptance: a pipeline that becomes more cautious is not thereby more correct.
 
 **Future work.** Our documents asserted their own claims, which produced the baseline ceiling;
 future designs should vary document reliability so that inflation is measurable. Agentic retrieval
@@ -498,9 +500,6 @@ produced by the released code, and the author is responsible for all content.
   https://www.lesswrong.com/posts/uw8RQ8yjKexnhTw6E/state-of-the-field-ai-for-epistemics-and-coordination
 - [AI for AI for Epistemics 2026] O. Cotton-Barratt and L. Finnveden. "AI for AI for
   Epistemics." Forethought, 1 Apr 2026. https://www.forethought.org/research/ai-for-ai-for-epistemics
-- [Design Sketches 2025] O. Cotton-Barratt, L. Vaintrob and O. Sourbut. "Design Sketches:
-  Collective Epistemics." Forethought, 2025.
-  https://www.forethought.org/research/design-sketches-collective-epistemics
 - [Information Discernment 2026] J. Ashkinaze, L. Kurek, A. Faisal, T. Miao, M. Joseph, C. Budak
   and E. Gilbert. "Information Discernment in Large Language Models." arXiv:2607.19355, 2026.
   https://arxiv.org/abs/2607.19355

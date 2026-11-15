@@ -93,7 +93,7 @@ Real-obscure pairs, pooled over models; details and every table in `results_summ
 ## Open issues for the write-up
 
 1. **Framing (done 16 Nov).** The title and abstract now report what was found: credentials changed
-   how much the models believed, not how well.
+   how much some models believed, and in none of them how well.
 2. **Baseline ceiling.** Report the pre-registered inflation tests as not testable, and the
    full-sample results as the informative ones (`results_summary.md`, "Baseline (C0) and the
    C0-ceiling rule"). Appendix A has the limitation.
