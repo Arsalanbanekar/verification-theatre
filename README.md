@@ -53,6 +53,7 @@ The git history dates every file.
 - **Main data collection**: the three Groq models, then Gemini, into `data/raw/`, run with the
   code at tag `pre-sprint`. The first and last collection times are given in
   `data/results/results_summary.md` and in the report.
+  - Same code for every study call (checked 15 November): the four runs in `data/logs/runs.jsonl` ran at `fee706c` (tag `pre-sprint`), `420fc69` and `420fc69-dirty` (one Gemini cell; the uncommitted edits were to analysis and documentation files), `src/build_documents.py`, `src/prompt_text.py`, `src/output_schema.py`, `src/runner.py`, `src/providers/`, `corpus/` and the study-model blocks of `models.yaml` are identical at all three, and all 3,875 logged requests match a rebuild from `fee706c`.
 - **Judging**: the two judges are chosen, the pilot's judge check runs, then the judges score
   the main data (`data/graded/`).
 - **Analysis** (`data/results/`) **and the write-up.**
