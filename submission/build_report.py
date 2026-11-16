@@ -3,24 +3,25 @@
   python submission/build_report.py          -> submission/report.docx
   python submission/build_report.py --pdf    -> also submission/report.pdf (Word via docx2pdf)
 
-The template's page setup, styles and fonts are kept, and its guidance text and info box are removed.
+The template supplies the page setup (US Letter, 1-inch margins), the styles and the list numbering; the
+styles are restyled to the author's earlier Apart report: Calibri throughout, body 11 pt justified at 1.08
+line spacing with 6 pt after, orange (#C55A11) bold headings, centred italic figure captions, tables with
+thin black borders and a light-orange header row, round bullets, and a centred page number in the footer.
 REPORT_DRAFT.md supplies the content, in the template's section order:
-- the title block: title, author, abstract;
+- title, author, affiliation and abstract;
 - 1 Introduction, 2 Related Work, 3 Methods, 4 Results;
 - 5 Discussion and Limitations, with Limitations and Future Work; 6 Conclusion;
 - Code and Data, then References;
 - the Appendix (Limitations and Dual-Use / Ethical Considerations), then the LLM Usage Statement.
 
-Markdown is converted to Word: bold, italic and code runs, bullet and numbered lists on the template's
-numbering, real tables, hyperlinks, and the four figures from data/results/ with numbered captions,
-each placed where the draft first cites it. The Code and Data section names the commit that holds
-the code, data, results and this report's source; the build stops if any of those have uncommitted
-changes, so the commit it names is the one the report was built from.
+Markdown is converted to Word: bold, italic and code runs, bullet and numbered lists, real tables, hyperlinks,
+and the four figures from data/results/ with numbered captions, each placed where the draft puts it. The Code
+and Data section names the commit that holds the code, data, results and this report's source; the build
+stops if any of those have uncommitted changes, so the commit it names is the one the report was built from.
 """
 from __future__ import annotations
 
 import argparse
-import copy
 import re
 import subprocess
 import sys
@@ -40,16 +41,19 @@ DRAFT = ROOT / "REPORT_DRAFT.md"
 OUT = ROOT / "submission" / "report.docx"
 FIGURES = {1: "fig1_acceptance.png", 2: "fig2_discrimination.png", 3: "fig3_scope_accuracy.png",
            4: "fig4_interpreter.png"}
-AUTHOR_NAME, AFFILIATION = "Arsalan Banekar", "Independent Researcher, Pune, India"
+AUTHOR_NAME = "Arsalan Banekar"
+AFFILIATION = ("Independent submission, Apart Research AI x Epistemics Research Sprint "
+               "(Track 2: Trust Infrastructure), November 2026")
 REPO_URL = "https://github.com/Arsalanbanekar/verification-theatre"
-BULLET_NUM_ID, NUMBERED_NUM_ID = 3, 5        # the template's dash-bullet and decimal list definitions
-FIG_WIDTH_IN = 5.0
-CODE_FONT = "Consolas"
-MINUS_FONT = "Cambria"                        # for U+2212 in the abstract box (see fill_title_block)
+BULLET_NUM_ID, NUMBERED_NUM_ID = 3, 5        # the template's bullet and decimal list definitions
+FIG_WIDTH_IN = 5.2
+FONT = "Calibri"
+BLACK, GREY, ORANGE = RGBColor(0, 0, 0), RGBColor(0x55, 0x55, 0x55), RGBColor(0xC5, 0x5A, 0x11)
+HEADER_FILL = "FCE4D6"
 LINK_COLOR = "1155CC"
 TEMPLATE_HEADINGS = {"1": "1. Introduction", "2": "2. Related Work", "3": "3. Methods", "4": "4. Results",
                      "5": "5. Discussion and Limitations", "6": "6. Conclusion"}
-PARA_AFTER, ITEM_AFTER = 3, 1                 # points after a paragraph and between list items
+PARA_AFTER, ITEM_AFTER = 6, 2                 # points after a paragraph and between list items
 LIMITATIONS_POINTER = ("Appendix A sets out the limitations, chiefly the baseline ceiling, the single unvalidated "
                        "judge, Qwen's parse failures and the lowest reasoning settings.")
 CELL_PAD_DXA = 30                             # top and bottom cell padding in the report's tables (1.5 pt)
@@ -135,12 +139,88 @@ def sections(blocks: list[dict]) -> tuple[str, dict[str, list[dict]]]:
         if b["t"] == "title":
             title = b["text"]
         elif b["t"] == "h" and b["level"] == 2:
-            text = b["text"]                                  # "Abstract", "1".."5", "Appendix A", "References"
+            text = b["text"]                                  # "Abstract", "1".."6", "Appendix A", "References"
             key = text.split(".")[0] if text.startswith("Appendix") else text.split(".")[0].split()[0]
             secs[key] = []
         elif key is not None:
             secs[key].append(b)
     return title, secs
+
+
+# ---------------------------------------------------------------- styles
+
+def _calibri(rpr) -> None:
+    """Calibri in all four script slots of an rPr element, with any theme-font override removed."""
+    fonts = rpr.find(qn("w:rFonts"))
+    if fonts is None:
+        fonts = OxmlElement("w:rFonts")
+        rpr.insert(0, fonts)
+    for attr in ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"):
+        fonts.attrib.pop(qn(f"w:{attr}"), None)
+    for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
+        fonts.set(qn(f"w:{attr}"), FONT)
+
+
+def _style(st, size, bold=False, italic=False, color=BLACK, before=None, after=None, align=None, keep=None):
+    st.font.name, st.font.size, st.font.bold, st.font.italic = FONT, Pt(size), bold, italic
+    st.font.color.rgb = color
+    _calibri(st.element.get_or_add_rPr())
+    pf = st.paragraph_format
+    if before is not None:
+        pf.space_before = Pt(before)
+    if after is not None:
+        pf.space_after = Pt(after)
+    if align is not None:
+        pf.alignment = align
+    if keep is not None:
+        pf.keep_with_next = keep
+
+
+def apply_styles(doc) -> None:
+    defaults = doc.styles.element.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr"))
+    _calibri(defaults)
+    normal = doc.styles["normal"]
+    _style(normal, 11, after=PARA_AFTER, before=0, align=WD_ALIGN_PARAGRAPH.JUSTIFY)
+    normal.paragraph_format.line_spacing = 1.08
+    _style(doc.styles["Heading 2"], 14, bold=True, color=ORANGE, before=18, after=6,
+           align=WD_ALIGN_PARAGRAPH.LEFT, keep=True)
+    _style(doc.styles["Heading 3"], 12, bold=True, color=ORANGE, before=10, after=4,
+           align=WD_ALIGN_PARAGRAPH.LEFT, keep=True)
+    if "Caption" not in [s.name for s in doc.styles]:
+        cap = doc.styles.add_style("Caption", WD_STYLE_TYPE.PARAGRAPH)
+        cap.base_style = normal
+    _style(doc.styles["Caption"], 10, italic=True, before=2, after=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+    for st in doc.styles:                                  # every other style that names a font: Calibri
+        rpr = st.element.find(qn("w:rPr"))
+        if rpr is not None and rpr.find(qn("w:rFonts")) is not None:
+            _calibri(rpr)
+    numbering = doc.part.numbering_part.element             # round bullets; list labels in Calibri
+    for an in numbering.findall(qn("w:abstractNum")):
+        for lvl in an.findall(qn("w:lvl")):
+            if lvl.find(qn("w:numFmt")).get(qn("w:val")) == "bullet":
+                lvl.find(qn("w:lvlText")).set(qn("w:val"), "•")
+            rpr = lvl.find(qn("w:rPr"))
+            if rpr is not None:
+                _calibri(rpr)
+
+
+def page_number_footer(doc) -> None:
+    footer = doc.sections[0].footer
+    footer.is_linked_to_previous = False
+    p = footer.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for kind, text in (("begin", None), (None, "PAGE"), ("end", None)):
+        r = p.add_run()
+        r.font.name, r.font.size = FONT, Pt(11)
+        if kind:
+            fld = OxmlElement("w:fldChar")
+            fld.set(qn("w:fldCharType"), kind)
+            r._r.append(fld)
+        else:
+            instr = OxmlElement("w:instrText")
+            instr.set(qn("xml:space"), "preserve")
+            instr.text = text
+            r._r.append(instr)
 
 
 # ---------------------------------------------------------------- Word helpers
@@ -182,12 +262,9 @@ def _run(par, text, bold=False, italic=False, code=False, size=None):
             pos = m.end()
         _run(par, text[pos:], bold, italic, False, size)
         return
-    r = par.add_run(text)
+    r = par.add_run(text)                                          # code spans are set in Calibri like the rest
     r.bold, r.italic = bold or None, italic or None
-    if code:
-        r.font.name = CODE_FONT
-        r.font.size = Pt((size or 11) - 1)
-    elif size:
+    if size:
         r.font.size = Pt(size)
 
 
@@ -221,30 +298,33 @@ def heading(doc, text: str, level: int):
     return doc.add_paragraph(text, style=f"Heading {level}")
 
 
-def add_list(doc, items: list[dict], size=None) -> None:
+def add_list(doc, items: list[dict], size=None, align=None) -> None:
     for k, it in enumerate(items):
         p = doc.add_paragraph(style="normal")
         add_runs(p, it["text"], size)
+        if align is not None:
+            p.alignment = align
         num_pr = p._p.get_or_add_pPr().get_or_add_numPr()
         num_pr.get_or_add_ilvl().val = it["level"]
         num_pr.get_or_add_numId().val = NUMBERED_NUM_ID if it["num"] else BULLET_NUM_ID
         p.paragraph_format.space_after = Pt(PARA_AFTER if k == len(items) - 1 else ITEM_AFTER)
 
 
-def caption_style(doc):
-    if "Caption" not in [s.name for s in doc.styles]:
-        st = doc.styles.add_style("Caption", WD_STYLE_TYPE.PARAGRAPH)
-        st.base_style = doc.styles["normal"]
-        st.font.size = Pt(9.5)
-        st.font.color.rgb = RGBColor(0x26, 0x26, 0x26)
-        st.paragraph_format.space_after = Pt(6)
-    return "Caption"
-
-
 def caption(doc, text: str, keep_with_next=False):
-    p = doc.add_paragraph(style=caption_style(doc))
+    p = doc.add_paragraph(style="Caption")
     add_runs(p, text)
     p.paragraph_format.keep_with_next = keep_with_next
+    return p
+
+
+def table_caption(doc, n: int, text: str):
+    """'Table N.' in bold, then the caption in italic, both 10 pt, above the table."""
+    p = doc.add_paragraph(style="normal")
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    _run(p, f"Table {n}.", bold=True, size=10)
+    add_runs(p, " " + text, size=10, italic=True)
+    pf = p.paragraph_format
+    pf.keep_with_next, pf.space_before, pf.space_after = True, Pt(4), Pt(3)
     return p
 
 
@@ -264,7 +344,7 @@ def _borders(table, size=4):
         e = OxmlElement(f"w:{edge}")
         e.set(qn("w:val"), "single")
         e.set(qn("w:sz"), str(size))
-        e.set(qn("w:color"), "808080")
+        e.set(qn("w:color"), "000000")
         borders.append(e)
     _tbl_pr(table, borders)
 
@@ -287,20 +367,25 @@ def add_table(doc, rows: list[list[str]], widths: list[float], size=9.5) -> None
     _cell_padding(t)
     for r, row in enumerate(rows):
         tr_pr = t.rows[r]._tr.get_or_add_trPr()
-        cant = OxmlElement("w:cantSplit")
-        tr_pr.append(cant)
+        tr_pr.append(OxmlElement("w:cantSplit"))
         for c, text in enumerate(row):
             cell = t.cell(r, c)
             cell.width = Inches(widths[c])
+            if r == 0:                                             # header row: light-orange fill
+                shd = OxmlElement("w:shd")
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), HEADER_FILL)
+                cell._tc.get_or_add_tcPr().append(shd)
             p = cell.paragraphs[0]
             add_runs(p, text, size, bold=(r == 0))
-            p.paragraph_format.space_after = Pt(1)
-            p.paragraph_format.keep_with_next = r < len(rows) - 1   # keep the table on one page
-            if c > 0 and r > 0 and re.fullmatch(r"[−+\-]?[\d.]+%?\*?", text):
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            mark, sz = OxmlElement("w:rPr"), OxmlElement("w:sz")      # the paragraph mark in the cell's size,
-            sz.set(qn("w:val"), str(int(size * 2)))                   # so the default 11 pt does not set the
-            mark.append(sz)                                           # row height
+            pf = p.paragraph_format
+            pf.space_after, pf.space_before, pf.line_spacing = Pt(1), Pt(0), 1.0
+            pf.keep_with_next = r < len(rows) - 1                 # keep the table on one page
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            mark, sz = OxmlElement("w:rPr"), OxmlElement("w:sz")   # the paragraph mark in the cell's size,
+            sz.set(qn("w:val"), str(int(size * 2)))                # so the default 11 pt does not set the
+            mark.append(sz)                                        # row height
             p._p.get_or_add_pPr().append(mark)
 
 
@@ -309,17 +394,18 @@ def add_figure(doc, n: int, text: str) -> None:
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p.paragraph_format.keep_with_next = True
     p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_after = Pt(0)
     p.add_run().add_picture(str(ROOT / "data" / "results" / FIGURES[n]), width=Inches(FIG_WIDTH_IN))
     text = re.sub(r";\s*`data/results/[^`]+`", "", text)        # "(95% CIs over claims; `file`)." -> "(… claims)."
     text = re.sub(r"\s*\(`data/results/[^`]+`\)", "", text)      # "marked (`file`)." -> "marked."
-    caption(doc, f"**Figure {n}.** {text}")
+    caption(doc, f"Figure {n}. {text}")
 
 
 # ---------------------------------------------------------------- the document
 
 def emit(doc, blocks: list[dict], tables: dict[int, list[float]]) -> None:
-    """Draft blocks in order. A table caption goes above its table; Table 2's notes (a list after a
-    'Notes to Table 2:' line) are set below it as one caption-style paragraph."""
+    """Draft blocks in order. A table caption goes above its table; a table's notes (a list after a
+    'Notes to Table N:' line) are set below it as one small paragraph."""
     pending_caption, i = None, 0
     while i < len(blocks):
         b = blocks[i]
@@ -328,7 +414,7 @@ def emit(doc, blocks: list[dict], tables: dict[int, list[float]]) -> None:
         elif b["t"] == "p" and b["text"].startswith("Notes to Table") and i + 1 < len(blocks) \
                 and blocks[i + 1]["t"] == "list":
             notes = " ".join(it["text"] for it in blocks[i + 1]["items"])
-            caption(doc, f"*Notes.* {notes}")
+            body(doc, f"*Notes.* {notes}", size=9.5, space_after=10)
             i += 1
         elif b["t"] == "p":
             body(doc, b["text"])
@@ -339,7 +425,7 @@ def emit(doc, blocks: list[dict], tables: dict[int, list[float]]) -> None:
         elif b["t"] == "table":
             n = pending_caption["n"] if pending_caption else 0
             if pending_caption:
-                caption(doc, f"**Table {n}.** {pending_caption['text']}", keep_with_next=True)
+                table_caption(doc, n, pending_caption["text"])
                 pending_caption = None
             add_table(doc, b["rows"], tables.get(n, [6.5 / len(b["rows"][0])] * len(b["rows"][0])))
             gap = doc.add_paragraph(style="normal").paragraph_format     # a 6-point gap below the table
@@ -349,47 +435,22 @@ def emit(doc, blocks: list[dict], tables: dict[int, list[float]]) -> None:
         i += 1
 
 
-def fill_title_block(doc, title: str, abstract: str) -> None:
-    """The template's first table: the title in its first cell; in its second, the author block (a grid of
-    six 'Author name / Affiliation' cells, then 'With Apart Research'), 'Abstract', and a box holding the
-    abstract guidance. The grid becomes the one author, in the grid's own formatting; the abstract
-    replaces the guidance in the box, in the box's font, not italic."""
-    block = doc.tables[0]
-    tcell, acell = block.cell(0, 0), block.cell(1, 0)
-    title_p = next(p for p in tcell.paragraphs if p.style.name == "Title")
-    runs = title_p.runs
-    runs[0].text = title
-    for r in runs[1:]:
-        r.text = ""
+def title_block(doc, title: str, abstract: str) -> None:
+    """Title, author, affiliation, the Abstract heading and the abstract, as in the author's earlier report."""
+    def line(text, size, bold=False, color=BLACK, after=0, align=WD_ALIGN_PARAGRAPH.CENTER):
+        p = doc.add_paragraph(style="normal")
+        p.alignment = align
+        r = p.add_run(text)
+        r.font.size, r.bold, r.font.color.rgb = Pt(size), bold or None, color
+        p.paragraph_format.space_after = Pt(after)
+        return p
 
-    author_cell = acell.tables[0].cell(0, 0)
-    grid = author_cell.tables[0]
-    author_p = copy.deepcopy(grid.cell(0, 0).paragraphs[0]._p)
-    texts = list(author_p.iter(qn("w:t")))
-    assert [t.text for t in texts[:2]] == ["Author name 1", "Affiliation"], [t.text for t in texts]
-    texts[0].text, texts[1].text = AUTHOR_NAME, AFFILIATION
-    grid._tbl.addprevious(author_p)
-    grid._tbl.getparent().remove(grid._tbl)
-
-    box_p = acell.tables[1].cell(0, 0).paragraphs[0]
-    font = next((r.font.name for r in box_p.runs if r.font.name), None)
-    for r in list(box_p.runs):
-        r._r.getparent().remove(r._r)
-    add_runs(box_p, abstract)
-    for r in box_p.runs:
-        r.font.name, r.italic = font, None
-    for r in list(box_p.runs):                  # the box font's minus is nearly em-dash wide (0.94 em), so
-        if "−" not in r.text:                   # minus signs are set in a serif with a plus-width minus
-            continue
-        pieces = [x for x in re.split("(−)", r.text) if x]
-        for piece in pieces:
-            el = copy.deepcopy(r._r)
-            r._r.addprevious(el)
-            new = type(r)(el, box_p)
-            new.text = piece
-            if piece == "−":
-                new.font.name = MINUS_FONT
-        r._r.getparent().remove(r._r)
+    line(title, 17, bold=True, after=10).paragraph_format.line_spacing = 1.0
+    line(AUTHOR_NAME, 11, bold=True)
+    line(AFFILIATION, 10, color=GREY, after=16)
+    line("Abstract", 12, bold=True, color=ORANGE, after=3, align=WD_ALIGN_PARAGRAPH.LEFT) \
+        .paragraph_format.keep_with_next = True
+    body(doc, abstract)
 
 
 def git_commit(paths=("REPORT_DRAFT.md", "src", "data", "corpus", "models.yaml", "PREREGISTRATION.md")) -> str:
@@ -405,18 +466,14 @@ def build(out: Path = OUT, commit: str | None = None) -> Path:
     commit = commit or git_commit()
     title, secs = sections(parse(DRAFT.read_text(encoding="utf-8")))
     doc = Document(str(TEMPLATE))
+    apply_styles(doc)
     body_el = doc.element.body
-    title_block = doc.tables[0]._tbl
-    started = False
-    for child in list(body_el.iterchildren()):   # keep the leading spacer and the title block; drop the rest,
-        if child is title_block:                 # the info box and all guidance text included
-            started = True
-            continue
-        if child.tag == qn("w:sectPr") or not started:
-            continue
-        body_el.remove(child)
+    for child in list(body_el.iterchildren()):     # the template's own content goes: title block, info box, guidance
+        if child.tag != qn("w:sectPr"):
+            body_el.remove(child)
+    page_number_footer(doc)
     abstract = " ".join(b["text"] for b in secs["Abstract"] if b["t"] == "p")
-    fill_title_block(doc, title, abstract)
+    title_block(doc, title, abstract)
 
     widths = {1: [0.45, 3.0, 3.0], 2: [1.6, 0.85, 0.65, 0.65, 0.65, 1.05, 1.05]}
     for key in ("1", "2", "3", "4"):
@@ -444,13 +501,14 @@ def build(out: Path = OUT, commit: str | None = None) -> Path:
         {"level": 0, "num": False, "text": "**Data**: every model response (`data/raw/`), every judge call and score "
                                            "(`data/graded/`) and every analysis output (`data/results/`), in the "
                                            "same repository."},
-    ])
+    ], align=WD_ALIGN_PARAGRAPH.LEFT)                 # a long URL would stretch a justified line
 
     heading(doc, "References", 2)
     for b in secs["References"]:
         for it in (b["items"] if b["t"] == "list" else []):
             p = doc.add_paragraph(style="normal")
             add_runs(p, it["text"], size=10)
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             pf = p.paragraph_format
             pf.left_indent, pf.first_line_indent, pf.space_after = Inches(0.3), Inches(-0.3), Pt(4)
 
@@ -458,13 +516,13 @@ def build(out: Path = OUT, commit: str | None = None) -> Path:
     heading(doc, "Appendix A. Limitations and Dual-Use / Ethical Considerations", 2)
     ai = next(k for k, b in enumerate(appendix) if b["t"] == "p" and b["text"].startswith("**AI assistance.**"))
     emit(doc, appendix[:ai] + appendix[ai + 1:], widths)
-    if "Appendix B" in secs:
-        heading(doc, "Appendix B. Supplementary methods and results", 2)
-        emit(doc, secs["Appendix B"], widths)
 
     heading(doc, "LLM Usage Statement", 2)
     body(doc, appendix[ai]["text"].replace("**AI assistance.** ", "", 1))
 
+    for rpr in doc.element.body.iter(qn("w:rPr")):    # Calibri everywhere, whatever a run or mark names
+        if rpr.find(qn("w:rFonts")) is not None:
+            _calibri(rpr)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
     return out

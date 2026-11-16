@@ -18,7 +18,7 @@ import pymupdf
 ROOT = Path(__file__).resolve().parents[1]
 PDF = ROOT / "submission" / "report.pdf"
 HEADINGS = ("1. Introduction", "2. Related Work", "3. Methods", "4. Results", "5. Discussion and Limitations",
-            "6. Conclusion", "Code and Data", "References", "Appendix A.", "Appendix B.", "LLM Usage Statement")
+            "6. Conclusion", "Code and Data", "References", "Appendix A.", "LLM Usage Statement")
 
 
 def locate(doc, text: str) -> tuple[int, float] | None:
@@ -28,7 +28,7 @@ def locate(doc, text: str) -> tuple[int, float] | None:
             for line in block.get("lines", []):
                 spans = line["spans"]
                 joined = "".join(s["text"] for s in spans).strip()
-                if joined.startswith(text) and max(s["size"] for s in spans) > 12:
+                if joined.startswith(text) and max(s["size"] for s in spans) > 11.6:
                     return i, line["bbox"][1]
     return None
 
@@ -53,7 +53,7 @@ def stranded_headings(doc) -> list[str]:
         lines = [("".join(s["text"] for s in l["spans"]).strip(), max(s["size"] for s in l["spans"]))
                  for b in page.get_text("dict")["blocks"] for l in b.get("lines", []) if l["spans"]]
         lines = [x for x in lines if x[0]]
-        if lines and lines[-1][1] > 12.5:
+        if lines and lines[-1][1] > 11.6:
             out.append(f"page {i}: '{lines[-1][0][:60]}'")
     return out
 
