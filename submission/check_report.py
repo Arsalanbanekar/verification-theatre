@@ -18,19 +18,32 @@ import pymupdf
 ROOT = Path(__file__).resolve().parents[1]
 PDF = ROOT / "submission" / "report.pdf"
 HEADINGS = ("1. Introduction", "2. Related Work", "3. Methods", "4. Results", "5. Discussion and Limitations",
-            "Code and Data", "References", "Appendix A.", "LLM Usage Statement")
+            "6. Conclusion", "Code and Data", "References", "Appendix A.", "Appendix B.", "LLM Usage Statement")
 
 
-def page_of(doc, text: str) -> int | None:
-    """1-based page of the first line that starts with text, set in a font larger than body text."""
+def locate(doc, text: str) -> tuple[int, float] | None:
+    """(1-based page, top y in points) of the first line that starts with text, set larger than body text."""
     for i, page in enumerate(doc, 1):
         for block in page.get_text("dict")["blocks"]:
             for line in block.get("lines", []):
                 spans = line["spans"]
                 joined = "".join(s["text"] for s in spans).strip()
                 if joined.startswith(text) and max(s["size"] for s in spans) > 12:
-                    return i
+                    return i, line["bbox"][1]
     return None
+
+
+def page_of(doc, text: str) -> int | None:
+    hit = locate(doc, text)
+    return hit[0] if hit else None
+
+
+def main_text_pages(doc, margin_pt: float = 72.0) -> float:
+    """Pages of main text before the References heading: full pages, plus the share of the References
+    page's text area above the heading."""
+    page, y = locate(doc, "References")
+    height = doc[page - 1].rect.height
+    return (page - 1) + max(0.0, y - margin_pt) / (height - 2 * margin_pt)
 
 
 def stranded_headings(doc) -> list[str]:
@@ -54,8 +67,8 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     doc = pymupdf.open(a.pdf)
     refs = page_of(doc, "References")
-    print(f"pages: {doc.page_count}; References starts on page {refs}; main text: {refs} pages "
-          f"(title block to the end of Code and Data, the last partly filled)")
+    print(f"pages: {doc.page_count}; References starts on page {refs}; main text before References: "
+          f"{main_text_pages(doc):.2f} pages")
     for h in HEADINGS:
         print(f"  {h:32} page {page_of(doc, h)}")
     bad = [(i, ch) for i, page in enumerate(doc, 1) for ch in page.get_text() if ch in "�□"]

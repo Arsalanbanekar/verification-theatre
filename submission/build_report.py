@@ -7,7 +7,7 @@ The template's page setup, styles and fonts are kept, and its guidance text and 
 REPORT_DRAFT.md supplies the content, in the template's section order:
 - the title block: title, author, abstract;
 - 1 Introduction, 2 Related Work, 3 Methods, 4 Results;
-- 5 Discussion and Limitations, with Limitations and Future Work;
+- 5 Discussion and Limitations, with Limitations and Future Work; 6 Conclusion;
 - Code and Data, then References;
 - the Appendix (Limitations and Dual-Use / Ethical Considerations), then the LLM Usage Statement.
 
@@ -43,14 +43,16 @@ FIGURES = {1: "fig1_acceptance.png", 2: "fig2_discrimination.png", 3: "fig3_scop
 AUTHOR_NAME, AFFILIATION = "Arsalan Banekar", "Independent Researcher, Pune, India"
 REPO_URL = "https://github.com/Arsalanbanekar/verification-theatre"
 BULLET_NUM_ID, NUMBERED_NUM_ID = 3, 5        # the template's dash-bullet and decimal list definitions
-FIG_WIDTH_IN = 5.5
+FIG_WIDTH_IN = 5.0
 CODE_FONT = "Consolas"
+MINUS_FONT = "Cambria"                        # for U+2212 in the abstract box (see fill_title_block)
 LINK_COLOR = "1155CC"
 TEMPLATE_HEADINGS = {"1": "1. Introduction", "2": "2. Related Work", "3": "3. Methods", "4": "4. Results",
-                     "5": "5. Discussion and Limitations"}
-LIMITATIONS_POINTER = ("The limitations are set out in Appendix A: the baseline ceiling, the single unvalidated "
-                       "judge, Qwen's parse failures, the lowest reasoning settings, and a single-turn design over "
-                       "four models with credentials shown as crJSON views rather than signed assets.")
+                     "5": "5. Discussion and Limitations", "6": "6. Conclusion"}
+PARA_AFTER, ITEM_AFTER = 3, 1                 # points after a paragraph and between list items
+LIMITATIONS_POINTER = ("Appendix A sets out the limitations, chiefly the baseline ceiling, the single unvalidated "
+                       "judge, Qwen's parse failures and the lowest reasoning settings.")
+CELL_PAD_DXA = 30                             # top and bottom cell padding in the report's tables (1.5 pt)
 
 
 # ---------------------------------------------------------------- Markdown -> blocks
@@ -206,7 +208,7 @@ def add_runs(par, text: str, size=None, bold=False, italic=False) -> None:
     _run(par, text[pos:], bold, italic, False, size)
 
 
-def body(doc, text: str, size=None, space_after=6, align=None):
+def body(doc, text: str, size=None, space_after=PARA_AFTER, align=None):
     p = doc.add_paragraph(style="normal")
     add_runs(p, text, size)
     p.paragraph_format.space_after = Pt(space_after)
@@ -226,7 +228,7 @@ def add_list(doc, items: list[dict], size=None) -> None:
         num_pr = p._p.get_or_add_pPr().get_or_add_numPr()
         num_pr.get_or_add_ilvl().val = it["level"]
         num_pr.get_or_add_numId().val = NUMBERED_NUM_ID if it["num"] else BULLET_NUM_ID
-        p.paragraph_format.space_after = Pt(6 if k == len(items) - 1 else 2)
+        p.paragraph_format.space_after = Pt(PARA_AFTER if k == len(items) - 1 else ITEM_AFTER)
 
 
 def caption_style(doc):
@@ -235,7 +237,7 @@ def caption_style(doc):
         st.base_style = doc.styles["normal"]
         st.font.size = Pt(9.5)
         st.font.color.rgb = RGBColor(0x26, 0x26, 0x26)
-        st.paragraph_format.space_after = Pt(10)
+        st.paragraph_format.space_after = Pt(6)
     return "Caption"
 
 
@@ -246,8 +248,17 @@ def caption(doc, text: str, keep_with_next=False):
     return p
 
 
-def _borders(table, size=4):
+def _tbl_pr(table, el) -> None:
+    """Add a table property in schema order, before tblLook."""
     tbl_pr = table._tbl.tblPr
+    look = tbl_pr.find(qn("w:tblLook"))
+    if look is not None:
+        look.addprevious(el)
+    else:
+        tbl_pr.append(el)
+
+
+def _borders(table, size=4):
     borders = OxmlElement("w:tblBorders")
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         e = OxmlElement(f"w:{edge}")
@@ -255,13 +266,25 @@ def _borders(table, size=4):
         e.set(qn("w:sz"), str(size))
         e.set(qn("w:color"), "808080")
         borders.append(e)
-    tbl_pr.append(borders)
+    _tbl_pr(table, borders)
+
+
+def _cell_padding(table, top_bottom=CELL_PAD_DXA, sides=100):
+    """This table's cell padding; the template's table style pads every side by 100 dxa (5 pt)."""
+    mar = OxmlElement("w:tblCellMar")
+    for edge, w in (("top", top_bottom), ("left", sides), ("bottom", top_bottom), ("right", sides)):
+        e = OxmlElement(f"w:{edge}")
+        e.set(qn("w:w"), str(w))
+        e.set(qn("w:type"), "dxa")
+        mar.append(e)
+    _tbl_pr(table, mar)
 
 
 def add_table(doc, rows: list[list[str]], widths: list[float], size=9.5) -> None:
     t = doc.add_table(rows=len(rows), cols=len(rows[0]))
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     _borders(t)
+    _cell_padding(t)
     for r, row in enumerate(rows):
         tr_pr = t.rows[r]._tr.get_or_add_trPr()
         cant = OxmlElement("w:cantSplit")
@@ -275,6 +298,10 @@ def add_table(doc, rows: list[list[str]], widths: list[float], size=9.5) -> None
             p.paragraph_format.keep_with_next = r < len(rows) - 1   # keep the table on one page
             if c > 0 and r > 0 and re.fullmatch(r"[−+\-]?[\d.]+%?\*?", text):
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            mark, sz = OxmlElement("w:rPr"), OxmlElement("w:sz")      # the paragraph mark in the cell's size,
+            sz.set(qn("w:val"), str(int(size * 2)))                   # so the default 11 pt does not set the
+            mark.append(sz)                                           # row height
+            p._p.get_or_add_pPr().append(mark)
 
 
 def add_figure(doc, n: int, text: str) -> None:
@@ -315,7 +342,8 @@ def emit(doc, blocks: list[dict], tables: dict[int, list[float]]) -> None:
                 caption(doc, f"**Table {n}.** {pending_caption['text']}", keep_with_next=True)
                 pending_caption = None
             add_table(doc, b["rows"], tables.get(n, [6.5 / len(b["rows"][0])] * len(b["rows"][0])))
-            doc.add_paragraph(style="normal").paragraph_format.space_after = Pt(2)
+            gap = doc.add_paragraph(style="normal").paragraph_format     # a 6-point gap below the table
+            gap.line_spacing, gap.space_after = Pt(6), Pt(0)
         elif b["t"] == "figure":
             add_figure(doc, b["n"], b["text"])
         i += 1
@@ -350,6 +378,18 @@ def fill_title_block(doc, title: str, abstract: str) -> None:
     add_runs(box_p, abstract)
     for r in box_p.runs:
         r.font.name, r.italic = font, None
+    for r in list(box_p.runs):                  # the box font's minus is nearly em-dash wide (0.94 em), so
+        if "−" not in r.text:                   # minus signs are set in a serif with a plus-width minus
+            continue
+        pieces = [x for x in re.split("(−)", r.text) if x]
+        for piece in pieces:
+            el = copy.deepcopy(r._r)
+            r._r.addprevious(el)
+            new = type(r)(el, box_p)
+            new.text = piece
+            if piece == "−":
+                new.font.name = MINUS_FONT
+        r._r.getparent().remove(r._r)
 
 
 def git_commit(paths=("REPORT_DRAFT.md", "src", "data", "corpus", "models.yaml", "PREREGISTRATION.md")) -> str:
@@ -392,6 +432,9 @@ def build(out: Path = OUT, commit: str | None = None) -> Path:
     heading(doc, "Future Work", 3)
     body(doc, disc[fw]["text"].replace("**Future work.** ", "", 1))
     emit(doc, disc[fw + 1:], widths)
+
+    heading(doc, TEMPLATE_HEADINGS["6"], 2)
+    emit(doc, secs["6"], widths)
 
     heading(doc, "Code and Data", 2)
     add_list(doc, [
