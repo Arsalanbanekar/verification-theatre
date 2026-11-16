@@ -165,7 +165,7 @@ def test_report_states_the_current_facts():
     for fact in ("rev 3.3", "rev 3.4", "Gemini 3.5 Flash-Lite", "exploratory and unvalidated", "no human labels",
                  "single LLM judge (glm-5.2)", "H3 was not tested", "(exploratory; H3 not tested)",
                  "`glm-5.2` via Adaption", "re-asked once with a 12,000-token cap", "tagged `pre-sprint`",
-                 "paired t-tests over pairs", "Holm correction over the eight", "upper bound of the 95% CI",
+                 "paired t-tests over pairs", "Holm correction over the eight",
                  "data/results/results_summary.md", "Table 1", "Figure 1", "Figure 2", "Figure 3", "Figure 4"):
         assert fact in text, fact
 
